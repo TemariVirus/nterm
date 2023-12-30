@@ -339,12 +339,10 @@ pub fn tick() void {
     }
 
     const now = time.nanoTimestamp();
-    const elapsed: u64 = blk: {
-        if (now - last_tick < 0) {
-            return;
-        }
-        break :blk @intCast(now - last_tick);
-    };
+    if (now - last_tick < 0) {
+        return;
+    }
+    const elapsed: u64 = @intCast(now - last_tick);
 
     updateKeyStates();
     for (key_triggers.items) |*trigger| {

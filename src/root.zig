@@ -1,9 +1,7 @@
 //! Provides a canvas-like interface for drawing to the terminal. The methods
 //! provided are not thread-safe.
 
-// TODO: Add option to display FPS
 // TODO: Resize terminal buffer and window to match canvas size
-// TODO: Create animation struct with transperancy
 // TODO: Thread safety? (can probably get away without it)
 const std = @import("std");
 const kernel32 = windows.kernel32;
@@ -31,7 +29,7 @@ const ST = ESC ++ "\\";
 
 var initialized = false;
 
-var _allocator: Allocator = undefined;
+pub var _allocator: Allocator = undefined;
 var stdout: File = undefined;
 var terminal_size: Size = undefined;
 var draw_buffer: ByteList = undefined;
@@ -360,6 +358,7 @@ pub fn render() !void {
 
     if (should_redraw) {
         try clearScreen(writer);
+        try hideCursor(writer);
     }
 
     var last_x: u16 = 0;
