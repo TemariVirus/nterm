@@ -3,6 +3,7 @@
 
 // TODO: Resize terminal buffer and window to match canvas size
 // TODO: Thread safety? (can probably get away without it)
+// TODO: Add option to copy last frame to current frame
 const std = @import("std");
 const kernel32 = windows.kernel32;
 const system = std.os.system;
@@ -314,6 +315,10 @@ pub fn canvasSize() Size {
 }
 
 pub fn setCanvasSize(width: u16, height: u16) !void {
+    if (!initialized) {
+        return;
+    }
+
     should_redraw = true;
 
     last.deinit(_allocator);
@@ -342,11 +347,18 @@ fn useMainBuffer() void {
 }
 
 pub fn drawPixel(x: u16, y: u16, fg: Color, bg: Color, char: u21) void {
+    if (!initialized) {
+        return;
+    }
+
     assert(current.inBounds(x, y));
     current.set(x, y, .{ .fg = fg, .bg = bg, .char = char });
 }
 
 pub fn render() !void {
+    if (!initialized) {
+        return error.NotInitialized;
+    }
     defer should_redraw = false;
 
     updateTerminalSize();
@@ -363,12 +375,13 @@ pub fn render() !void {
 
     var last_x: u16 = 0;
     var last_y: u16 = 0;
-    try setCursorPos(writer, last_x, last_y);
+    try setCursorPos(writer, last_x + x_offset, last_y + y_offset);
 
     var last_fg = current.get(last_x, last_y).fg;
     var last_bg = current.get(last_x, last_y).bg;
     try setColor(writer, last_fg, last_bg);
 
+    var diff_exists = false;
     var y: u16 = 0;
     while (y < draw_size.height) : (y += 1) {
         var x: u16 = 0;
@@ -378,18 +391,23 @@ pub fn render() !void {
             if (!should_redraw and eql(p, last.get(x, y))) {
                 continue;
             }
+            diff_exists = true;
 
-            if (x != last_x + 1 or y != last_y) {
+            if (x != last_x or y != last_y) {
                 try setCursorPos(writer, x + x_offset, y + y_offset);
             }
-            last_x = x;
+            last_x = x + 1; // Add 1 to account for cursor movement
             last_y = y;
 
-            if (p.fg != last_fg or p.bg != last_bg) {
+            if (p.fg != last_fg and p.bg != last_bg) {
                 try setColor(writer, p.fg, p.bg);
-                last_fg = p.fg;
-                last_bg = p.bg;
+            } else if (p.fg != last_fg) {
+                try setForeColor(writer, p.fg);
+            } else if (p.bg != last_bg) {
+                try setBackColor(writer, p.bg);
             }
+            last_fg = p.fg;
+            last_bg = p.bg;
 
             var utf8_bytes: [4]u8 = undefined;
             const len = try unicode.utf8Encode(p.char, &utf8_bytes);
@@ -399,7 +417,9 @@ pub fn render() !void {
 
     // Reset colors at the end so that the area outside the canvas stays black
     try resetColors(writer);
-    stdout.writeAll(draw_buffer.items[0..draw_buffer.items.len]) catch {};
+    if (diff_exists) {
+        stdout.writeAll(draw_buffer.items[0..draw_buffer.items.len]) catch {};
+    }
     try advanceBuffers();
 }
 
@@ -416,7 +436,7 @@ fn advanceBuffers() !void {
     current.fill(.{ .fg = Color.Black, .bg = Color.Black, .char = ' ' });
 
     // Limit the size of the draw buffer to not waste memory
-    const max_size = current.size.area() * 8;
+    const max_size = current.size.area() * 12;
     if (draw_buffer.items.len > max_size) {
         draw_buffer.clearAndFree(_allocator);
         try draw_buffer.ensureTotalCapacity(_allocator, max_size / 2);
@@ -434,6 +454,14 @@ fn resetColors(writer: anytype) !void {
 
 fn setColor(writer: anytype, fg: Color, bg: Color) !void {
     try writer.print(CSI ++ "38;5;{};48;5;{}m", .{ @intFromEnum(fg), @intFromEnum(bg) });
+}
+
+fn setForeColor(writer: anytype, fg: Color) !void {
+    try writer.print(CSI ++ "38;5;{}m", .{@intFromEnum(fg)});
+}
+
+fn setBackColor(writer: anytype, bg: Color) !void {
+    try writer.print(CSI ++ "48;5;{}m", .{@intFromEnum(bg)});
 }
 
 fn resetCursor(writer: anytype) !void {

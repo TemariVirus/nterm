@@ -180,7 +180,7 @@ pub fn printAligned(
 fn writeFn(context: *WriterContext, bytes: []const u8) !usize {
     if (context.x < context.self.width) {
         context.self.writeText(context.x, context.y, context.fg, context.bg, bytes);
-        context.x += @as(u16, @intCast(bytes.len));
+        context.x +|= @intCast(@min(std.math.maxInt(u16), bytes.len));
     }
 
     // Bytes that were truncated are also considered written
