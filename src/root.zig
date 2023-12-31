@@ -406,7 +406,7 @@ pub fn render() !void {
 fn updateTerminalSize() void {
     const old_terminal_size = terminal_size;
     terminal_size = terminalSize() orelse terminal_size;
-    if (eql(terminal_size, old_terminal_size)) {
+    if (!eql(terminal_size, old_terminal_size)) {
         should_redraw = true;
     }
 }
