@@ -7,6 +7,7 @@
 const std = @import("std");
 const kernel32 = windows.kernel32;
 const system = std.os.system;
+const time = std.time;
 const unicode = std.unicode;
 const windows = std.os.windows;
 
@@ -16,6 +17,7 @@ const File = std.fs.File;
 const SIG = std.os.SIG;
 
 pub const input = @import("input.zig");
+const RingQueue = @import("ring_queue.zig").RingQueue(i64);
 pub const View = @import("View.zig");
 
 const assert = std.debug.assert;
@@ -38,6 +40,8 @@ var draw_buffer: ByteList = undefined;
 var last: Frame = undefined;
 var current: Frame = undefined;
 var should_redraw: bool = undefined;
+
+var draw_times: RingQueue = undefined;
 
 /// Closest 8-bit colors to Windows 10 Console's default 16, calculated using
 /// CIELAB color space
@@ -161,7 +165,7 @@ pub const InitError = error{
     FailedToSetConsoleOutputCP,
     FailedToSetConsoleMode,
 };
-pub fn init(allocator: Allocator, width: u16, height: u16) !void {
+pub fn init(allocator: Allocator, fps_timing_window: usize, width: u16, height: u16) !void {
     if (initialized) {
         return;
     }
@@ -212,6 +216,9 @@ pub fn init(allocator: Allocator, width: u16, height: u16) !void {
     last = try Frame.init(allocator, width, height);
     current = try Frame.init(allocator, width, height);
 
+    draw_times = try RingQueue.init(allocator, fps_timing_window);
+    draw_times.enqueue(time.microTimestamp()) catch {};
+
     useAlternateBuffer();
     hideCursor(stdout.writer()) catch {};
 
@@ -232,6 +239,8 @@ pub fn deinit() void {
     draw_buffer.deinit(_allocator);
     last.deinit(_allocator);
     current.deinit(_allocator);
+
+    draw_times.deinit(_allocator);
 
     input.deinit();
 }
@@ -332,6 +341,34 @@ pub fn setCanvasSize(width: u16, height: u16) !void {
     setTerminalSize(width, height) catch {};
 }
 
+pub fn fps() f64 {
+    if (!initialized or draw_times.data.len == 0) {
+        return 0;
+    }
+    assert(!draw_times.isEmpty());
+
+    const elapsed: f64 = @floatFromInt(time.microTimestamp() - draw_times.peekIndex(0).?);
+    return time.us_per_s * @as(f64, @floatFromInt(draw_times.len())) / elapsed;
+}
+
+pub fn fpsTimingWindow() usize {
+    return draw_times.data.len;
+}
+
+pub fn setFpsTimingWindow(window: usize) !void {
+    if (!initialized) {
+        return;
+    }
+
+    var old_times = draw_times;
+    defer old_times.deinit(_allocator);
+
+    draw_times = try RingQueue.init(_allocator, window);
+    while (old_times.dequeue()) |t| {
+        draw_times.enqueue(t) catch break;
+    }
+}
+
 pub fn setTitle(title: []const u8) void {
     stdout.writeAll(OSC ++ "0;") catch {};
     stdout.writeAll(title) catch {};
@@ -361,6 +398,12 @@ pub fn render() !void {
     }
     defer should_redraw = false;
 
+    if (draw_times.data.len > 0) {
+        if (draw_times.isFull()) {
+            _ = draw_times.dequeue();
+        }
+        draw_times.enqueue(time.microTimestamp()) catch unreachable;
+    }
     updateTerminalSize();
 
     const draw_size = current.size.bound(terminal_size);
