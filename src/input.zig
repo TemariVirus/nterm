@@ -366,7 +366,7 @@ pub fn addKeyTrigger(
 pub fn removeKeyTrigger(id: usize) void {
     for (key_triggers.items, 0..) |trigger, i| {
         if (trigger.id == id) {
-            key_triggers.orderedRemove(i);
+            _ = key_triggers.orderedRemove(i);
             break;
         }
     }
