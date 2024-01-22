@@ -16,7 +16,6 @@ const ByteList = std.ArrayListUnmanaged(u8);
 const File = std.fs.File;
 const SIG = std.os.SIG;
 
-pub const input = @import("input.zig");
 const RingQueue = @import("ring_queue.zig").RingQueue(i64);
 pub const View = @import("View.zig");
 
@@ -222,8 +221,6 @@ pub fn init(allocator: Allocator, fps_timing_window: usize, width: u16, height: 
     useAlternateBuffer();
     hideCursor(stdout.writer()) catch {};
 
-    try input.init(allocator);
-
     should_redraw = true;
 }
 
@@ -241,8 +238,6 @@ pub fn deinit() void {
     current.deinit(_allocator);
 
     draw_times.deinit(_allocator);
-
-    input.deinit();
 }
 
 fn handleExit(sig: c_int) callconv(.C) void {
@@ -339,6 +334,15 @@ pub fn setCanvasSize(width: u16, height: u16) !void {
     current.copy(old_current);
 
     setTerminalSize(width, height) catch {};
+}
+
+pub fn view() View {
+    return View{
+        .left = 0,
+        .top = 0,
+        .width = current.size.width,
+        .height = current.size.height,
+    };
 }
 
 pub fn fps() f64 {
