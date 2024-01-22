@@ -16,6 +16,7 @@ const ByteList = std.ArrayListUnmanaged(u8);
 const File = std.fs.File;
 const SIG = std.os.SIG;
 
+pub const input = @import("input.zig");
 const RingQueue = @import("ring_queue.zig").RingQueue(i64);
 pub const View = @import("View.zig");
 
