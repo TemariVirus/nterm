@@ -127,7 +127,7 @@ pub fn printAt(
     bg: Color,
     comptime format: []const u8,
     args: anytype,
-) !void {
+) void {
     var context = WriterContext{
         .self = self,
         .x = x,
@@ -136,7 +136,7 @@ pub fn printAt(
         .bg = bg,
     };
     const writer = Writer{ .context = &context };
-    try writer.print(format, args);
+    writer.print(format, args) catch unreachable;
 }
 
 /// Overflows are truncated.
@@ -150,7 +150,7 @@ pub fn printAligned(
     args: anytype,
 ) !void {
     if (alignment == .Left) {
-        try self.printAt(0, y, fg, bg, format, args);
+        self.printAt(0, y, fg, bg, format, args);
         return;
     }
 
