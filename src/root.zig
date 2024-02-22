@@ -393,8 +393,9 @@ pub fn drawPixel(x: u16, y: u16, fg: Color, bg: Color, char: u21) void {
         return;
     }
 
-    assert(current.inBounds(x, y));
-    current.set(x, y, .{ .fg = fg, .bg = bg, .char = char });
+    if (current.inBounds(x, y)) {
+        current.set(x, y, .{ .fg = fg, .bg = bg, .char = char });
+    }
 }
 
 pub fn render() !void {

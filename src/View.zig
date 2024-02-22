@@ -21,27 +21,13 @@ pub const Alignment = enum {
     Right,
 };
 
-left: u16,
-top: u16,
+left: u16 = 0,
+top: u16 = 0,
 width: u16,
 height: u16,
 
-pub fn init(left: u16, top: u16, width: u16, height: u16) Self {
-    const canvas_size = root.canvasSize();
-    assert(left + width <= canvas_size.width and
-        top + height <= canvas_size.height);
-
-    return Self{
-        .left = left,
-        .top = top,
-        .width = width,
-        .height = height,
-    };
-}
-
+/// Creates a new view based on the position of this view.
 pub fn sub(self: Self, left: u16, top: u16, width: u16, height: u16) Self {
-    assert(left + width <= self.width and top + height <= self.height);
-
     const new_left = self.left + left;
     const new_top = self.top + top;
     return Self{
@@ -52,6 +38,8 @@ pub fn sub(self: Self, left: u16, top: u16, width: u16, height: u16) Self {
     };
 }
 
+/// Writes a pixel to the screen if the pixel is within the bounds of the view.
+/// Returns `true` if the pixel was written; Otherwise, `false`.
 pub fn writePixel(
     self: Self,
     x: u16,
@@ -59,12 +47,15 @@ pub fn writePixel(
     fg: Color,
     bg: Color,
     char: u21,
-) void {
-    assert(x < self.width and y < self.height);
-    root.drawPixel(x + self.left, y + self.top, fg, bg, char);
+) bool {
+    if (x < self.width and y < self.height) {
+        root.drawPixel(x + self.left, y + self.top, fg, bg, char);
+        return true;
+    }
+    return false;
 }
 
-/// Overflows are truncated.
+/// Overflows are truncated. Returns the number of characters written.
 pub fn writeText(
     self: Self,
     x: u16,
@@ -72,16 +63,16 @@ pub fn writeText(
     fg: Color,
     bg: Color,
     text: []const u8,
-) void {
+) u16 {
     var code_points = (Utf8View.init(text) catch unreachable).iterator();
     var i = x;
     while (code_points.nextCodepoint()) |c| {
-        if (i >= self.width) {
+        if (!self.writePixel(i, y, fg, bg, c)) {
             break;
         }
-        self.writePixel(i, y, fg, bg, c);
         i += 1;
     }
+    return i - x;
 }
 
 /// Overflows are truncated.
@@ -113,7 +104,7 @@ pub fn writeAligned(
         if (x >= self.width) {
             break;
         }
-        self.writePixel(x, y, fg, bg, c);
+        _ = self.writePixel(x, y, fg, bg, c);
         x += 1;
     }
 }
@@ -149,6 +140,7 @@ pub fn printAligned(
     comptime format: []const u8,
     args: anytype,
 ) !void {
+    // Avoid allcating if possible
     if (alignment == .Left) {
         self.printAt(0, y, fg, bg, format, args);
         return;
@@ -158,28 +150,12 @@ pub fn printAligned(
     defer buf.deinit();
 
     try buf.writer().print(format, args);
-
-    if (buf.items.len > self.width) {
-        const start = switch (alignment) {
-            .Left => unreachable,
-            .Center => (buf.items.len - self.width) / 2,
-            .Right => buf.items.len - self.width,
-        };
-        self.writeText(0, y, fg, bg, buf.items[start..]);
-        return;
-    }
-
-    const x = switch (alignment) {
-        .Left => unreachable,
-        .Center => (self.width - buf.items.len) / 2,
-        .Right => self.width - buf.items.len,
-    };
-    self.writeText(@intCast(x), y, fg, bg, buf.items);
+    self.writeAligned(alignment, y, fg, bg, buf.items);
 }
 
 fn writeFn(context: *WriterContext, bytes: []const u8) !usize {
     if (context.x < context.self.width) {
-        context.self.writeText(context.x, context.y, context.fg, context.bg, bytes);
+        _ = context.self.writeText(context.x, context.y, context.fg, context.bg, bytes);
         context.x +|= @intCast(@min(std.math.maxInt(u16), bytes.len));
     }
 
@@ -187,13 +163,14 @@ fn writeFn(context: *WriterContext, bytes: []const u8) !usize {
     return bytes.len;
 }
 
+/// Draws a double-lined box along the edges of the view.
 pub fn drawBox(self: Self, left: u16, top: u16, width: u16, height: u16) void {
     if (width == 0 or height == 0) {
         return;
     }
 
     if (width == 1 and height == 1) {
-        self.writePixel(left, top, .White, .Black, '☐');
+        _ = self.writePixel(left, top, .White, .Black, '☐');
         return;
     }
 
@@ -202,31 +179,31 @@ pub fn drawBox(self: Self, left: u16, top: u16, width: u16, height: u16) void {
 
     if (width == 1) {
         for (top..bottom + 1) |y| {
-            self.writePixel(left, @intCast(y), .White, .Black, '║');
+            _ = self.writePixel(left, @intCast(y), .White, .Black, '║');
         }
         return;
     }
     if (height == 1) {
         for (left..right + 1) |x| {
-            self.writePixel(@intCast(x), top, .White, .Black, '═');
+            _ = self.writePixel(@intCast(x), top, .White, .Black, '═');
         }
         return;
     }
 
-    self.writePixel(left, top, .White, .Black, '╔');
+    _ = self.writePixel(left, top, .White, .Black, '╔');
     for (left + 1..right) |x| {
-        self.writePixel(@intCast(x), top, .White, .Black, '═');
+        _ = self.writePixel(@intCast(x), top, .White, .Black, '═');
     }
-    self.writePixel(right, top, .White, .Black, '╗');
+    _ = self.writePixel(right, top, .White, .Black, '╗');
 
     for (top + 1..bottom) |y| {
-        self.writePixel(left, @intCast(y), .White, .Black, '║');
-        self.writePixel(right, @intCast(y), .White, .Black, '║');
+        _ = self.writePixel(left, @intCast(y), .White, .Black, '║');
+        _ = self.writePixel(right, @intCast(y), .White, .Black, '║');
     }
 
-    self.writePixel(left, bottom, .White, .Black, '╚');
+    _ = self.writePixel(left, bottom, .White, .Black, '╚');
     for (left + 1..right) |x| {
-        self.writePixel(@intCast(x), bottom, .White, .Black, '═');
+        _ = self.writePixel(@intCast(x), bottom, .White, .Black, '═');
     }
-    self.writePixel(right, bottom, .White, .Black, '╝');
+    _ = self.writePixel(right, bottom, .White, .Black, '╝');
 }
