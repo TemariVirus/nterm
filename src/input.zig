@@ -89,6 +89,7 @@ const windows = if (builtin.os.tag == .windows)
 
         var game_hwnd: usize = 0;
 
+        // https://learn.microsoft.com/en-us/windows/win32/inputdev/virtual-key-codes
         const VKey = enum(c_uint) {
             LButton = 0x01,
             RButton = 0x02,

@@ -48,22 +48,22 @@ var draw_times: RingQueue = undefined;
 ///
 /// https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
 pub const Color = enum(u8) {
-    Black = 232,
-    Red = 124,
-    Green = 34,
-    Yellow = 178,
-    Blue = 20, // Originally 27, but IMO 20 looks better
-    Magenta = 90,
-    Cyan = 32,
-    White = 252,
-    BrightBlack = 243,
-    BrightRed = 203,
-    BrightGreen = 40,
-    BrightYellow = 229,
-    BrightBlue = 69,
-    BrightMagenta = 127,
-    BrightCyan = 80,
-    BrightWhite = 255,
+    black = 232,
+    red = 124,
+    green = 34,
+    yellow = 178,
+    blue = 20, // Originally 27, but IMO 20 looks better
+    magenta = 90,
+    cyan = 32,
+    white = 252,
+    bright_black = 243,
+    bright_red = 203,
+    bright_green = 40,
+    bright_yellow = 229,
+    bright_blue = 69,
+    bright_magenta = 127,
+    bright_cyan = 80,
+    bright_white = 255,
 };
 
 pub const Size = struct {
@@ -100,7 +100,7 @@ const Frame = struct {
         const size = Size{ .width = width, .height = height };
         const pixels = try allocator.alloc(Pixel, size.area());
         var frame = Frame{ .size = size, .pixels = pixels };
-        frame.fill(.{ .fg = Color.Black, .bg = Color.Black, .char = ' ' });
+        frame.fill(.{ .fg = Color.black, .bg = Color.black, .char = ' ' });
         return frame;
     }
 
@@ -482,7 +482,7 @@ fn updateTerminalSize() void {
 
 fn advanceBuffers() !void {
     std.mem.swap(Frame, &last, &current);
-    current.fill(.{ .fg = Color.Black, .bg = Color.Black, .char = ' ' });
+    current.fill(.{ .fg = Color.black, .bg = Color.black, .char = ' ' });
 
     // Limit the size of the draw buffer to not waste memory
     const max_size = current.size.area() * 12;

@@ -16,9 +16,9 @@ const WriterContext = struct {
 const Writer = std.io.Writer(*WriterContext, error{}, writeFn);
 
 pub const Alignment = enum {
-    Left,
-    Center,
-    Right,
+    left,
+    center,
+    right,
 };
 
 left: u16 = 0,
@@ -86,14 +86,14 @@ pub fn writeAligned(
 ) void {
     const len = std.unicode.utf8CountCodepoints(text) catch unreachable;
     var x: u16 = if (len <= self.width) switch (alignment) {
-        .Left => 0,
-        .Center => @intCast((self.width - len) / 2),
-        .Right => @intCast(self.width - len),
+        .left => 0,
+        .center => @intCast((self.width - len) / 2),
+        .right => @intCast(self.width - len),
     } else 0;
     const start = if (len <= self.width) 0 else switch (alignment) {
-        .Left => 0,
-        .Center => (len - self.width) / 2,
-        .Right => len - self.width,
+        .left => 0,
+        .center => (len - self.width) / 2,
+        .right => len - self.width,
     };
 
     var codepoints = (Utf8View.init(text) catch unreachable).iterator();
@@ -141,7 +141,7 @@ pub fn printAligned(
     args: anytype,
 ) !void {
     // Avoid allcating if possible
-    if (alignment == .Left) {
+    if (alignment == .left) {
         self.printAt(0, y, fg, bg, format, args);
         return;
     }
@@ -170,7 +170,7 @@ pub fn drawBox(self: Self, left: u16, top: u16, width: u16, height: u16) void {
     }
 
     if (width == 1 and height == 1) {
-        _ = self.writePixel(left, top, .White, .Black, '☐');
+        _ = self.writePixel(left, top, .white, .black, '☐');
         return;
     }
 
@@ -179,31 +179,31 @@ pub fn drawBox(self: Self, left: u16, top: u16, width: u16, height: u16) void {
 
     if (width == 1) {
         for (top..bottom + 1) |y| {
-            _ = self.writePixel(left, @intCast(y), .White, .Black, '║');
+            _ = self.writePixel(left, @intCast(y), .white, .black, '║');
         }
         return;
     }
     if (height == 1) {
         for (left..right + 1) |x| {
-            _ = self.writePixel(@intCast(x), top, .White, .Black, '═');
+            _ = self.writePixel(@intCast(x), top, .white, .black, '═');
         }
         return;
     }
 
-    _ = self.writePixel(left, top, .White, .Black, '╔');
+    _ = self.writePixel(left, top, .white, .black, '╔');
     for (left + 1..right) |x| {
-        _ = self.writePixel(@intCast(x), top, .White, .Black, '═');
+        _ = self.writePixel(@intCast(x), top, .white, .black, '═');
     }
-    _ = self.writePixel(right, top, .White, .Black, '╗');
+    _ = self.writePixel(right, top, .white, .black, '╗');
 
     for (top + 1..bottom) |y| {
-        _ = self.writePixel(left, @intCast(y), .White, .Black, '║');
-        _ = self.writePixel(right, @intCast(y), .White, .Black, '║');
+        _ = self.writePixel(left, @intCast(y), .white, .black, '║');
+        _ = self.writePixel(right, @intCast(y), .white, .black, '║');
     }
 
-    _ = self.writePixel(left, bottom, .White, .Black, '╚');
+    _ = self.writePixel(left, bottom, .white, .black, '╚');
     for (left + 1..right) |x| {
-        _ = self.writePixel(@intCast(x), bottom, .White, .Black, '═');
+        _ = self.writePixel(@intCast(x), bottom, .white, .black, '═');
     }
-    _ = self.writePixel(right, bottom, .White, .Black, '╝');
+    _ = self.writePixel(right, bottom, .white, .black, '╝');
 }
