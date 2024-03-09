@@ -16,6 +16,7 @@ const ByteList = std.ArrayListUnmanaged(u8);
 const File = std.fs.File;
 const SIG = std.os.SIG;
 
+pub const Animation = @import("Animation.zig");
 pub const input = @import("input.zig");
 const RingQueue = @import("ring_queue.zig").RingQueue(i64);
 pub const View = @import("View.zig");
@@ -48,6 +49,8 @@ var draw_times: RingQueue = undefined;
 ///
 /// https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
 pub const Color = enum(u8) {
+    /// Not rendered (transperent)
+    none = 0,
     black = 232,
     red = 124,
     green = 34,
@@ -86,13 +89,13 @@ pub const Size = struct {
     }
 };
 
-const Pixel = struct {
+pub const Pixel = struct {
     fg: Color,
     bg: Color,
     char: u21,
 };
 
-const Frame = struct {
+pub const Frame = struct {
     size: Size,
     pixels: []Pixel,
 
@@ -394,7 +397,12 @@ pub fn drawPixel(x: u16, y: u16, fg: Color, bg: Color, char: u21) void {
     }
 
     if (current.inBounds(x, y)) {
-        current.set(x, y, .{ .fg = fg, .bg = bg, .char = char });
+        const old = current.get(x, y);
+        current.set(x, y, .{
+            .fg = if (fg == Color.none) old.fg else fg,
+            .bg = if (bg == Color.none) old.bg else bg,
+            .char = char,
+        });
     }
 }
 
@@ -437,6 +445,9 @@ pub fn render() !void {
         while (x < draw_size.width) : (x += 1) {
             const p = current.get(x, y);
 
+            if (p.fg == Color.none or p.bg == Color.none) {
+                continue;
+            }
             if (!should_redraw and eql(p, last.get(x, y))) {
                 continue;
             }
