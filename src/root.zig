@@ -392,18 +392,18 @@ fn useMainBuffer() void {
 }
 
 pub fn drawPixel(x: u16, y: u16, fg: Color, bg: Color, char: u21) void {
-    if (!initialized) {
+    if (!initialized or
+        !current.inBounds(x, y))
+    {
         return;
     }
 
-    if (current.inBounds(x, y)) {
-        const old = current.get(x, y);
-        current.set(x, y, .{
-            .fg = if (fg == Color.none) old.fg else fg,
-            .bg = if (bg == Color.none) old.bg else bg,
-            .char = char,
-        });
-    }
+    const old = current.get(x, y);
+    current.set(x, y, .{
+        .fg = if (fg == Color.none) old.fg else fg,
+        .bg = if (bg == Color.none) old.bg else bg,
+        .char = if (fg == Color.none) old.char else char,
+    });
 }
 
 pub fn render() !void {
