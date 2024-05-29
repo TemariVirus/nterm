@@ -2,24 +2,30 @@ const std = @import("std");
 const assert = std.debug.assert;
 
 const root = @import("root.zig");
-const Frame = root.Frame;
+const Pixel = root.Pixel;
+const Size = root.Size;
 const View = root.View;
 
 time: u64 = 0,
-frames: []const Frame,
+frames: []const []const Pixel,
 /// The time at which each frame ends, in nanoseconds.
 frame_times: []const u64,
+size: Size,
 view: View,
 
 const Self = @This();
 
-pub fn init(frames: []const Frame, frame_times: []const u64, view: View) Self {
+pub fn init(frames: []const []const Pixel, frame_times: []const u64, size: Size, view: View) Self {
     assert(frames.len > 0);
     assert(frames.len == frame_times.len);
+    for (frames) |frame| {
+        assert(frame.len == size.width * size.height);
+    }
 
     return .{
         .frames = frames,
         .frame_times = frame_times,
+        .size = size,
         .view = view,
     };
 }
@@ -53,9 +59,9 @@ pub fn forceRender(self: Self) bool {
     }
 
     const frame = self.frames[left];
-    for (0..frame.size.height) |y| {
-        for (0..frame.size.width) |x| {
-            const pixel = frame.get(@intCast(x), @intCast(y));
+    for (0..self.size.height) |y| {
+        for (0..self.size.width) |x| {
+            const pixel = frame[@as(usize, y) * self.size.width + @as(usize, x)];
             _ = self.view.writePixel(@intCast(x), @intCast(y), pixel.fg, pixel.bg, pixel.char);
         }
     }

@@ -5,16 +5,16 @@
 // TODO: Thread safety? (can probably get away without it)
 // TODO: Add option to copy last frame to current frame
 const std = @import("std");
+const Allocator = std.mem.Allocator;
+const AtomicBool = std.atomic.Value(bool);
+const ByteList = std.ArrayListUnmanaged(u8);
+const File = std.fs.File;
 const kernel32 = windows.kernel32;
-const system = std.os.system;
+const linux = std.os.linux;
+const SIG = linux.SIG;
 const time = std.time;
 const unicode = std.unicode;
 const windows = std.os.windows;
-
-const Allocator = std.mem.Allocator;
-const ByteList = std.ArrayListUnmanaged(u8);
-const File = std.fs.File;
-const SIG = std.os.SIG;
 
 pub const Animation = @import("Animation.zig");
 pub const input = @import("input.zig");
@@ -23,18 +23,19 @@ pub const View = @import("View.zig");
 
 const assert = std.debug.assert;
 const eql = std.meta.eql;
-const sigaction = std.os.sigaction;
 
-const IS_WINDOWS = @import("builtin").os.tag == .windows;
+const os_tag = @import("builtin").os.tag;
 const ESC = "\x1B";
 const CSI = ESC ++ "[";
 const OSC = ESC ++ "]";
 const ST = ESC ++ "\\";
 
-var initialized = false;
+// The exit handler runs on another thread so this variable needs to be atomic
+// to prevent double frees. The rest of this struct however is not thread-safe.
+var initialized: bool = false;
 
 pub var _allocator: Allocator = undefined;
-var stdout: File = undefined;
+var _stdout: File = undefined;
 var terminal_size: Size = undefined;
 var draw_buffer: ByteList = undefined;
 
@@ -45,9 +46,7 @@ var should_redraw: bool = undefined;
 var draw_times: RingQueue = undefined;
 
 /// Closest 8-bit colors to Windows 10 Console's default 16, calculated using
-/// CIELAB color space
-///
-/// https://en.wikipedia.org/wiki/ANSI_escape_code#Colors
+/// CIELAB color space (https://en.wikipedia.org/wiki/ANSI_escape_code#Colors)
 pub const Color = enum(u8) {
     /// Not rendered (transperent)
     none = 0,
@@ -144,31 +143,11 @@ pub const Frame = struct {
     }
 };
 
-const signal = if (IS_WINDOWS)
-    struct {
-        extern "c" fn signal(
-            sig: c_int,
-            func: *const fn (c_int, c_int) callconv(windows.WINAPI) void,
-        ) callconv(.C) *anyopaque;
-    }.signal
-else
-    void;
-
-const setConsoleMode = if (IS_WINDOWS)
-    struct {
-        extern "kernel32" fn SetConsoleMode(
-            console: windows.HANDLE,
-            mode: windows.DWORD,
-        ) callconv(windows.WINAPI) windows.BOOL;
-    }.SetConsoleMode
-else
-    void;
-
 pub const InitError = error{
     FailedToSetConsoleOutputCP,
     FailedToSetConsoleMode,
 };
-pub fn init(allocator: Allocator, fps_timing_window: usize, width: u16, height: u16) !void {
+pub fn init(allocator: Allocator, stdout: File, fps_timing_window: usize, width: u16, height: u16) !void {
     if (initialized) {
         return;
     }
@@ -176,38 +155,51 @@ pub fn init(allocator: Allocator, fps_timing_window: usize, width: u16, height: 
     errdefer initialized = false;
 
     _allocator = allocator;
-    stdout = std.io.getStdOut();
+    _stdout = stdout;
 
-    if (IS_WINDOWS) {
+    if (os_tag == .windows) {
+        const signal = struct {
+            extern "c" fn signal(
+                sig: c_int,
+                func: *const fn (c_int, c_int) callconv(windows.WINAPI) void,
+            ) callconv(.C) *anyopaque;
+        }.signal;
         _ = signal(SIG.INT, handleExitWindows);
     } else {
-        const action = std.os.Sigaction{
+        const action = linux.Sigaction{
             .handler = .{ .handler = handleExit },
             .mask = std.os.empty_sigset,
             .flags = 0,
         };
-        std.os.sigaction(SIG.INT, &action, null) catch unreachable;
+        linux.sigaction(SIG.INT, &action, null) catch unreachable;
     }
 
-    if (IS_WINDOWS) {
+    if (os_tag == .windows) {
         const CP_UTF8 = 65001;
         const result = kernel32.SetConsoleOutputCP(CP_UTF8);
-        if (system.getErrno(result) != .SUCCESS) {
+        if (result == windows.FALSE) {
             return InitError.FailedToSetConsoleOutputCP;
         }
+
+        const setConsoleMode = struct {
+            extern "kernel32" fn SetConsoleMode(
+                console: windows.HANDLE,
+                mode: windows.DWORD,
+            ) callconv(windows.WINAPI) windows.BOOL;
+        }.SetConsoleMode;
 
         const ENABLE_PROCESSED_OUTPUT = 0x1;
         const ENABLE_WRAP_AT_EOL_OUTPUT = 0x2;
         const ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x4;
         const ENABLE_LVB_GRID_WORLDWIDE = 0x10;
         const result2 = setConsoleMode(
-            stdout.handle,
+            _stdout.handle,
             ENABLE_PROCESSED_OUTPUT |
                 ENABLE_WRAP_AT_EOL_OUTPUT |
                 ENABLE_VIRTUAL_TERMINAL_PROCESSING |
                 ENABLE_LVB_GRID_WORLDWIDE,
         );
-        if (system.getErrno(result2) != .SUCCESS) {
+        if (result2 == windows.FALSE) {
             return InitError.FailedToSetConsoleMode;
         }
     }
@@ -223,7 +215,7 @@ pub fn init(allocator: Allocator, fps_timing_window: usize, width: u16, height: 
     draw_times.enqueue(time.microTimestamp()) catch {};
 
     useAlternateBuffer();
-    hideCursor(stdout.writer()) catch {};
+    hideCursor(_stdout.writer()) catch {};
 
     should_redraw = true;
 }
@@ -235,7 +227,7 @@ pub fn deinit() void {
     initialized = false;
 
     useMainBuffer();
-    showCursor(stdout.writer()) catch {};
+    showCursor(_stdout.writer()) catch {};
 
     draw_buffer.deinit(_allocator);
     last.deinit(_allocator);
@@ -260,24 +252,17 @@ fn handleExitWindows(sig: c_int, _: c_int) callconv(.C) void {
 }
 
 pub fn terminalSize() ?Size {
-    if (IS_WINDOWS) {
+    if (os_tag == .windows) {
         return terminalSizeWindows();
     }
 
-    if (!@hasDecl(system, "ioctl") or
-        !@hasDecl(system, "T") or
-        !@hasDecl(system.T, "IOCGWINSZ"))
-    {
-        @compileError("ioctl not available; cannot get terminal size.");
-    }
-
-    var size: system.winsize = undefined;
-    const result = system.ioctl(
+    var size: linux.winsize = undefined;
+    const result = linux.ioctl(
         std.os.STDOUT_FILENO,
-        system.T.IOCGWINSZ,
+        linux.T.IOCGWINSZ,
         @intFromPtr(&size),
     );
-    if (system.getErrno(result) != .SUCCESS) {
+    if (result == 0) {
         return null;
     }
 
@@ -289,8 +274,8 @@ pub fn terminalSize() ?Size {
 
 fn terminalSizeWindows() ?Size {
     var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-    const result = kernel32.GetConsoleScreenBufferInfo(stdout.handle, &info);
-    if (system.getErrno(result) != .SUCCESS) {
+    const result = kernel32.GetConsoleScreenBufferInfo(_stdout.handle, &info);
+    if (result == windows.FALSE) {
         return null;
     }
 
@@ -304,7 +289,7 @@ fn terminalSizeWindows() ?Size {
 pub fn setTerminalSize(width: u16, height: u16) !void {
     should_redraw = true;
 
-    if (IS_WINDOWS) {
+    if (.os_tag == .windows) {
         setTerminalSizeWindows(width, height);
     }
 
@@ -378,23 +363,21 @@ pub fn setFpsTimingWindow(window: usize) !void {
 }
 
 pub fn setTitle(title: []const u8) void {
-    stdout.writeAll(OSC ++ "0;") catch {};
-    stdout.writeAll(title) catch {};
-    stdout.writeAll(ST) catch {};
+    _stdout.writeAll(OSC ++ "0;") catch {};
+    _stdout.writeAll(title) catch {};
+    _stdout.writeAll(ST) catch {};
 }
 
 fn useAlternateBuffer() void {
-    stdout.writeAll(CSI ++ "?1049h") catch {};
+    _stdout.writeAll(CSI ++ "?1049h") catch {};
 }
 
 fn useMainBuffer() void {
-    stdout.writeAll(CSI ++ "?1049l") catch {};
+    _stdout.writeAll(CSI ++ "?1049l") catch {};
 }
 
 pub fn drawPixel(x: u16, y: u16, fg: Color, bg: Color, char: u21) void {
-    if (!initialized or
-        !current.inBounds(x, y))
-    {
+    if (!initialized or !current.inBounds(x, y)) {
         return;
     }
 
@@ -478,7 +461,7 @@ pub fn render() !void {
     // Reset colors at the end so that the area outside the canvas stays black
     try resetColors(writer);
     if (diff_exists) {
-        stdout.writeAll(draw_buffer.items[0..draw_buffer.items.len]) catch {};
+        _stdout.writeAll(draw_buffer.items[0..draw_buffer.items.len]) catch {};
     }
     try advanceBuffers();
 }

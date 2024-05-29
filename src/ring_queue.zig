@@ -69,7 +69,7 @@ pub fn RingQueue(comptime T: type) type {
 
         /// Reads the item at `index` from the queue and returns it without dequeuing.
         /// Returns `null` if `index` is out of bounds.
-        pub fn peekIndex(self: *Self, index: usize) ?T {
+        pub fn peekIndex(self: Self, index: usize) ?T {
             if (index >= self.len()) return null;
             return self.data[self.mask(self.tail + index)];
         }
