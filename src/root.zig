@@ -168,10 +168,10 @@ pub fn init(allocator: Allocator, stdout: File, fps_timing_window: usize, width:
     } else {
         const action = linux.Sigaction{
             .handler = .{ .handler = handleExit },
-            .mask = std.os.empty_sigset,
+            .mask = std.os.linux.empty_sigset,
             .flags = 0,
         };
-        linux.sigaction(SIG.INT, &action, null) catch unreachable;
+        _ = linux.sigaction(SIG.INT, &action, null);
     }
 
     if (os_tag == .windows) {
@@ -258,7 +258,7 @@ pub fn terminalSize() ?Size {
 
     var size: linux.winsize = undefined;
     const result = linux.ioctl(
-        std.os.STDOUT_FILENO,
+        std.os.linux.STDOUT_FILENO,
         linux.T.IOCGWINSZ,
         @intFromPtr(&size),
     );
