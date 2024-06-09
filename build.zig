@@ -4,16 +4,23 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const root_file = std.Build.LazyPath{
+        .src_path = .{
+            .owner = b,
+            .sub_path = "src/root.zig",
+        },
+    };
+
     const lib = b.addStaticLibrary(.{
         .name = "nterm",
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = root_file,
         .target = target,
         .optimize = optimize,
     });
 
     // Expose the library root
     _ = b.addModule("nterm", .{
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = root_file,
         .link_libc = target.result.os.tag == .windows, // LibC required on Windows for signal handling
     });
 
@@ -21,7 +28,7 @@ pub fn build(b: *std.Build) void {
 
     // Add test step
     const lib_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/root.zig" },
+        .root_source_file = root_file,
         .target = target,
         .optimize = optimize,
         .link_libc = target.result.os.tag == .windows, // LibC required on Windows for signal handling
