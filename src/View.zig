@@ -132,7 +132,7 @@ pub fn printAligned(
     bg: Color,
     comptime format: []const u8,
     args: anytype,
-) !void {
+) void {
     // We don't need to know the length for left alignment
     if (alignment == .left) {
         self.printAt(0, y, fg, bg, format, args);
