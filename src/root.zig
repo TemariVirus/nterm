@@ -168,7 +168,7 @@ pub fn init(allocator: Allocator, stdout: File, fps_timing_window: usize, width:
     } else {
         const action = linux.Sigaction{
             .handler = .{ .handler = handleExit },
-            .mask = std.os.linux.empty_sigset,
+            .mask = linux.empty_sigset,
             .flags = 0,
         };
         _ = linux.sigaction(SIG.INT, &action, null);
@@ -286,7 +286,7 @@ fn terminalSizeWindows() ?Size {
 }
 
 // TODO
-pub fn setTerminalSize(width: u16, height: u16) !void {
+pub fn setTerminalSize(width: u16, height: u16) void {
     should_redraw = true;
 
     if (.os_tag == .windows) {
@@ -298,7 +298,7 @@ pub fn setTerminalSize(width: u16, height: u16) !void {
 }
 
 // TODO
-fn setTerminalSizeWindows(width: u16, height: u16) !void {
+fn setTerminalSizeWindows(width: u16, height: u16) void {
     _ = height;
     _ = width;
 }
@@ -315,7 +315,7 @@ pub fn setCanvasSize(width: u16, height: u16) !void {
     should_redraw = true;
 
     last.deinit(_allocator);
-    const old_current = current;
+    var old_current = current;
     defer old_current.deinit(_allocator);
 
     last = try Frame.init(_allocator, width, height);
