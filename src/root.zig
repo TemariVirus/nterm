@@ -126,8 +126,8 @@ pub const Frame = struct {
         self.pixels[index] = p;
     }
 
-    pub fn copy(self: Frame, source: Frame) void {
-        const copy_size = self.Size.bound(source.size);
+    pub fn copy(self: *Frame, source: Frame) void {
+        const copy_size = self.size.bound(source.size);
         for (0..copy_size.height) |y| {
             for (0..copy_size.width) |x| {
                 const p = source.get(@intCast(x), @intCast(y));
@@ -321,8 +321,6 @@ pub fn setCanvasSize(width: u16, height: u16) !void {
     last = try Frame.init(_allocator, width, height);
     current = try Frame.init(_allocator, width, height);
     current.copy(old_current);
-
-    setTerminalSize(width, height) catch {};
 }
 
 pub fn view() View {
