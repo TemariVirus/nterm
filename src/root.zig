@@ -39,33 +39,32 @@ var _stdout: File = undefined;
 var terminal_size: Size = undefined;
 var draw_buffer: ByteList = undefined;
 
-var last: Frame = undefined;
-var current: Frame = undefined;
+var last_frame: Frame = undefined;
+var current_frame: Frame = undefined;
 var should_redraw: bool = undefined;
 
 var draw_times: RingQueue = undefined;
 
+pub const Color = u8;
 /// Closest 8-bit colors to Windows 10 Console's default 16, calculated using
 /// CIELAB color space (https://en.wikipedia.org/wiki/ANSI_escape_code#Colors)
-pub const Color = enum(u8) {
-    /// Not rendered (transperent)
-    none = 0,
-    black = 232,
-    red = 124,
-    green = 34,
-    yellow = 178,
-    blue = 20, // Originally 27, but IMO 20 looks better
-    magenta = 90,
-    cyan = 32,
-    white = 252,
-    bright_black = 243,
-    bright_red = 203,
-    bright_green = 40,
-    bright_yellow = 229,
-    bright_blue = 69,
-    bright_magenta = 127,
-    bright_cyan = 80,
-    bright_white = 255,
+pub const Colors = struct {
+    pub const BLACK: Color = 232;
+    pub const RED: Color = 124;
+    pub const GREEN: Color = 34;
+    pub const YELLOW: Color = 178;
+    pub const BLUE: Color = 20; // Originally 27, but IMO 20 looks better.
+    pub const MAGENTA: Color = 90;
+    pub const CYAN: Color = 32;
+    pub const WHITE: Color = 252;
+    pub const BRIGHT_BLACK: Color = 243;
+    pub const BRIGHT_RED: Color = 203;
+    pub const BRIGHT_GREEN: Color = 40;
+    pub const BRIGHT_YELLOW: Color = 229;
+    pub const BRIGHT_BLUE: Color = 69;
+    pub const BRIGHT_MAGENTA: Color = 127;
+    pub const BRIGHT_CYAN: Color = 80;
+    pub const BRIGHT_WHITE: Color = 255;
 };
 
 pub const Size = struct {
@@ -89,8 +88,11 @@ pub const Size = struct {
 };
 
 pub const Pixel = struct {
-    fg: Color,
-    bg: Color,
+    /// Foreground color. If `null`, the terminal's default foreground color is used.
+    fg: ?Color,
+    /// Background color. If `null`, the terminal's default background color is used.
+    bg: ?Color,
+    /// Unicode codepoint to display.
     char: u21,
 };
 
@@ -102,7 +104,7 @@ pub const Frame = struct {
         const size = Size{ .width = width, .height = height };
         const pixels = try allocator.alloc(Pixel, size.area());
         var frame = Frame{ .size = size, .pixels = pixels };
-        frame.fill(.{ .fg = Color.black, .bg = Color.black, .char = ' ' });
+        frame.fill(.{ .fg = null, .bg = null, .char = ' ' });
         return frame;
     }
 
@@ -208,8 +210,8 @@ pub fn init(allocator: Allocator, stdout: File, fps_timing_window: usize, width:
     terminal_size = terminalSize() orelse Size{ .width = 120, .height = 30 };
     draw_buffer = ByteList{};
 
-    last = try Frame.init(allocator, width, height);
-    current = try Frame.init(allocator, width, height);
+    last_frame = try Frame.init(allocator, width, height);
+    current_frame = try Frame.init(allocator, width, height);
 
     draw_times = try RingQueue.init(allocator, fps_timing_window);
     draw_times.enqueue(time.microTimestamp()) catch {};
@@ -230,8 +232,8 @@ pub fn deinit() void {
     showCursor(_stdout.writer()) catch {};
 
     draw_buffer.deinit(_allocator);
-    last.deinit(_allocator);
-    current.deinit(_allocator);
+    last_frame.deinit(_allocator);
+    current_frame.deinit(_allocator);
 
     draw_times.deinit(_allocator);
 }
@@ -304,7 +306,7 @@ fn setTerminalSizeWindows(width: u16, height: u16) void {
 }
 
 pub fn canvasSize() Size {
-    return current.size;
+    return current_frame.size;
 }
 
 pub fn setCanvasSize(width: u16, height: u16) !void {
@@ -314,21 +316,21 @@ pub fn setCanvasSize(width: u16, height: u16) !void {
 
     should_redraw = true;
 
-    last.deinit(_allocator);
-    var old_current = current;
+    last_frame.deinit(_allocator);
+    var old_current = current_frame;
     defer old_current.deinit(_allocator);
 
-    last = try Frame.init(_allocator, width, height);
-    current = try Frame.init(_allocator, width, height);
-    current.copy(old_current);
+    last_frame = try Frame.init(_allocator, width, height);
+    current_frame = try Frame.init(_allocator, width, height);
+    current_frame.copy(old_current);
 }
 
 pub fn view() View {
     return View{
         .left = 0,
         .top = 0,
-        .width = current.size.width,
-        .height = current.size.height,
+        .width = current_frame.size.width,
+        .height = current_frame.size.height,
     };
 }
 
@@ -374,16 +376,28 @@ fn useMainBuffer() void {
     _stdout.writeAll(CSI ++ "?1049l") catch {};
 }
 
-pub fn drawPixel(x: u16, y: u16, fg: Color, bg: Color, char: u21) void {
-    if (!initialized or !current.inBounds(x, y)) {
+pub fn setPixel(x: u16, y: u16, fg: ?Color, bg: ?Color, char: u21) void {
+    if (!initialized or !current_frame.inBounds(x, y)) {
         return;
     }
 
-    const old = current.get(x, y);
-    current.set(x, y, .{
-        .fg = if (fg == Color.none) old.fg else fg,
-        .bg = if (bg == Color.none) old.bg else bg,
-        .char = if (fg == Color.none) old.char else char,
+    current_frame.set(x, y, .{
+        .fg = fg,
+        .bg = bg,
+        .char = char,
+    });
+}
+
+pub fn drawPixel(x: u16, y: u16, fg: ?Color, bg: ?Color, char: u21) void {
+    if (!initialized or !current_frame.inBounds(x, y)) {
+        return;
+    }
+
+    const old = current_frame.get(x, y);
+    current_frame.set(x, y, .{
+        .fg = fg orelse old.fg,
+        .bg = bg orelse old.bg,
+        .char = if (fg) |_| char else old.char,
     });
 }
 
@@ -401,7 +415,7 @@ pub fn render() !void {
     }
     updateTerminalSize();
 
-    const draw_size = current.size.bound(terminal_size);
+    const draw_size = current_frame.size.bound(terminal_size);
     const writer = draw_buffer.writer(_allocator);
     const x_offset = @max(0, terminal_size.width - draw_size.width) / 2;
     const y_offset = @max(0, terminal_size.height - draw_size.height) / 2;
@@ -415,8 +429,8 @@ pub fn render() !void {
     var last_y: u16 = 0;
     try setCursorPos(writer, last_x + x_offset, last_y + y_offset);
 
-    var last_fg = current.get(last_x, last_y).fg;
-    var last_bg = current.get(last_x, last_y).bg;
+    var last_fg = current_frame.get(last_x, last_y).fg;
+    var last_bg = current_frame.get(last_x, last_y).bg;
     try setColor(writer, last_fg, last_bg);
 
     var diff_exists = false;
@@ -424,12 +438,9 @@ pub fn render() !void {
     while (y < draw_size.height) : (y += 1) {
         var x: u16 = 0;
         while (x < draw_size.width) : (x += 1) {
-            const p = current.get(x, y);
+            const p = current_frame.get(x, y);
 
-            if (p.fg == Color.none or p.bg == Color.none) {
-                continue;
-            }
-            if (!should_redraw and eql(p, last.get(x, y))) {
+            if (!should_redraw and eql(p, last_frame.get(x, y))) {
                 continue;
             }
             diff_exists = true;
@@ -440,12 +451,15 @@ pub fn render() !void {
             last_x = x + 1; // Add 1 to account for cursor movement
             last_y = y;
 
-            if (p.fg != last_fg and p.bg != last_bg) {
+            if ((p.fg != last_fg and p.bg != last_bg) or
+                p.fg == null or
+                p.bg == null)
+            {
                 try setColor(writer, p.fg, p.bg);
             } else if (p.fg != last_fg) {
-                try setForeColor(writer, p.fg);
+                try setForeColor(writer, p.fg.?);
             } else if (p.bg != last_bg) {
-                try setBackColor(writer, p.bg);
+                try setBackColor(writer, p.bg.?);
             }
             last_fg = p.fg;
             last_bg = p.bg;
@@ -456,7 +470,7 @@ pub fn render() !void {
         }
     }
 
-    // Reset colors at the end so that the area outside the canvas stays black
+    // Reset colors at the end so that the area outside the canvas is unaffected
     try resetColors(writer);
     if (diff_exists) {
         _stdout.writeAll(draw_buffer.items[0..draw_buffer.items.len]) catch {};
@@ -473,11 +487,11 @@ fn updateTerminalSize() void {
 }
 
 fn advanceBuffers() !void {
-    std.mem.swap(Frame, &last, &current);
-    current.fill(.{ .fg = Color.black, .bg = Color.black, .char = ' ' });
+    std.mem.swap(Frame, &last_frame, &current_frame);
+    current_frame.fill(.{ .fg = null, .bg = null, .char = ' ' });
 
     // Limit the size of the draw buffer to not waste memory
-    const max_size = current.size.area() * 12;
+    const max_size = current_frame.size.area() * 12;
     if (draw_buffer.items.len > max_size) {
         draw_buffer.clearAndFree(_allocator);
         try draw_buffer.ensureTotalCapacity(_allocator, max_size / 2);
@@ -493,16 +507,27 @@ fn resetColors(writer: anytype) !void {
     try writer.writeAll(CSI ++ "m");
 }
 
-fn setColor(writer: anytype, fg: Color, bg: Color) !void {
-    try writer.print(CSI ++ "38;5;{};48;5;{}m", .{ @intFromEnum(fg), @intFromEnum(bg) });
+fn setColor(writer: anytype, fg: ?Color, bg: ?Color) !void {
+    if (fg == null or bg == null) {
+        try resetColors(writer);
+        if (fg) |fg_color| {
+            try setForeColor(writer, fg_color);
+        }
+        if (bg) |bg_color| {
+            try setBackColor(writer, bg_color);
+        }
+        return;
+    }
+    // If both colors are non-null, write with single escape sequence to save bytes
+    try writer.print(CSI ++ "38;5;{};48;5;{}m", .{ fg.?, bg.? });
 }
 
 fn setForeColor(writer: anytype, fg: Color) !void {
-    try writer.print(CSI ++ "38;5;{}m", .{@intFromEnum(fg)});
+    try writer.print(CSI ++ "38;5;{}m", .{fg});
 }
 
 fn setBackColor(writer: anytype, bg: Color) !void {
-    try writer.print(CSI ++ "48;5;{}m", .{@intFromEnum(bg)});
+    try writer.print(CSI ++ "48;5;{}m", .{bg});
 }
 
 fn resetCursor(writer: anytype) !void {
@@ -510,6 +535,7 @@ fn resetCursor(writer: anytype) !void {
 }
 
 fn setCursorPos(writer: anytype, x: u16, y: u16) !void {
+    // Convert 0-based coordinates to 1-based
     try writer.print(CSI ++ "{};{}H", .{ y + 1, x + 1 });
 }
 

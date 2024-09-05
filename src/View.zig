@@ -12,8 +12,8 @@ const WriterContext = struct {
     start: usize = 0,
     x: u16,
     y: u16,
-    fg: Color,
-    bg: Color,
+    fg: ?Color,
+    bg: ?Color,
 };
 const Writer = std.io.Writer(*WriterContext, error{}, writeFn);
 
@@ -46,8 +46,8 @@ pub fn writePixel(
     self: Self,
     x: u16,
     y: u16,
-    fg: Color,
-    bg: Color,
+    fg: ?Color,
+    bg: ?Color,
     char: u21,
 ) bool {
     if (x < self.width and y < self.height) {
@@ -62,8 +62,8 @@ pub fn writeText(
     self: Self,
     x: u16,
     y: u16,
-    fg: Color,
-    bg: Color,
+    fg: ?Color,
+    bg: ?Color,
     text: []const u8,
 ) u16 {
     var code_points = (unicode.Utf8View.init(text) catch unreachable).iterator();
@@ -82,8 +82,8 @@ pub fn writeAligned(
     self: Self,
     alignment: Alignment,
     y: u16,
-    fg: Color,
-    bg: Color,
+    fg: ?Color,
+    bg: ?Color,
     text: []const u8,
 ) void {
     const len = unicode.utf8CountCodepoints(text) catch unreachable;
@@ -107,8 +107,8 @@ pub fn printAt(
     self: Self,
     x: u16,
     y: u16,
-    fg: Color,
-    bg: Color,
+    fg: ?Color,
+    bg: ?Color,
     comptime format: []const u8,
     args: anytype,
 ) void {
@@ -128,8 +128,8 @@ pub fn printAligned(
     self: Self,
     alignment: Alignment,
     y: u16,
-    fg: Color,
-    bg: Color,
+    fg: ?Color,
+    bg: ?Color,
     comptime format: []const u8,
     args: anytype,
 ) void {
@@ -204,13 +204,21 @@ fn getFmtLenWriterFn(context: *usize, bytes: []const u8) !usize {
 }
 
 /// Draws a box positioned relative to the view.
-pub fn drawBox(self: Self, left: u16, top: u16, width: u16, height: u16) void {
+pub fn drawBox(
+    self: Self,
+    left: u16,
+    top: u16,
+    width: u16,
+    height: u16,
+    fg: ?Color,
+    bg: ?Color,
+) void {
     if (width == 0 or height == 0) {
         return;
     }
 
     if (width == 1 and height == 1) {
-        _ = self.writePixel(left, top, .white, .black, '☐');
+        _ = self.writePixel(left, top, fg, bg, '☐');
         return;
     }
 
@@ -219,31 +227,31 @@ pub fn drawBox(self: Self, left: u16, top: u16, width: u16, height: u16) void {
 
     if (width == 1) {
         for (top..bottom + 1) |y| {
-            _ = self.writePixel(left, @intCast(y), .white, .black, '║');
+            _ = self.writePixel(left, @intCast(y), fg, bg, '║');
         }
         return;
     }
     if (height == 1) {
         for (left..right + 1) |x| {
-            _ = self.writePixel(@intCast(x), top, .white, .black, '═');
+            _ = self.writePixel(@intCast(x), top, fg, bg, '═');
         }
         return;
     }
 
-    _ = self.writePixel(left, top, .white, .black, '╔');
+    _ = self.writePixel(left, top, fg, bg, '╔');
     for (left + 1..right) |x| {
-        _ = self.writePixel(@intCast(x), top, .white, .black, '═');
+        _ = self.writePixel(@intCast(x), top, fg, bg, '═');
     }
-    _ = self.writePixel(right, top, .white, .black, '╗');
+    _ = self.writePixel(right, top, fg, bg, '╗');
 
     for (top + 1..bottom) |y| {
-        _ = self.writePixel(left, @intCast(y), .white, .black, '║');
-        _ = self.writePixel(right, @intCast(y), .white, .black, '║');
+        _ = self.writePixel(left, @intCast(y), fg, bg, '║');
+        _ = self.writePixel(right, @intCast(y), fg, bg, '║');
     }
 
-    _ = self.writePixel(left, bottom, .white, .black, '╚');
+    _ = self.writePixel(left, bottom, fg, bg, '╚');
     for (left + 1..right) |x| {
-        _ = self.writePixel(@intCast(x), bottom, .white, .black, '═');
+        _ = self.writePixel(@intCast(x), bottom, fg, bg, '═');
     }
-    _ = self.writePixel(right, bottom, .white, .black, '╝');
+    _ = self.writePixel(right, bottom, fg, bg, '╝');
 }
