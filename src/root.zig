@@ -42,6 +42,8 @@ var draw_buffer: ByteList = undefined;
 var last_frame: Frame = undefined;
 var current_frame: Frame = undefined;
 var should_redraw: bool = undefined;
+var _null_fg_color: ?Color = undefined;
+var _null_bg_color: ?Color = undefined;
 
 var draw_times: RingQueue = undefined;
 
@@ -67,6 +69,7 @@ pub const Colors = struct {
     pub const BRIGHT_WHITE: Color = 255;
 };
 
+/// A 2D size with width and height.
 pub const Size = struct {
     width: u16,
     height: u16,
@@ -87,15 +90,26 @@ pub const Size = struct {
     }
 };
 
+/// A single pixel on the canvas.
 pub const Pixel = struct {
-    /// Foreground color. If `null`, the terminal's default foreground color is used.
+    /// Foreground color. If `null`, `null_color` is used.
     fg: ?Color,
-    /// Background color. If `null`, the terminal's default background color is used.
+    /// Background color. If `null`, `null_color` is used.
     bg: ?Color,
     /// Unicode codepoint to display.
     char: u21,
+
+    /// Returns the pixel that will be actually drawn to the screen.
+    pub fn resolve(self: Pixel) Pixel {
+        return .{
+            .fg = self.fg orelse _null_fg_color,
+            .bg = self.bg orelse _null_bg_color,
+            .char = self.char,
+        };
+    }
 };
 
+/// Represents the state of the canvas at a given point in time.
 pub const Frame = struct {
     size: Size,
     pixels: []Pixel,
@@ -149,7 +163,36 @@ pub const InitError = error{
     FailedToSetConsoleOutputCP,
     FailedToSetConsoleMode,
 };
-pub fn init(allocator: Allocator, stdout: File, fps_timing_window: usize, width: u16, height: u16) !void {
+
+/// Initializes the terminal canvas. This function must be called before any
+/// other functions in this module. Fails silently if the canvas is already
+/// initialized.
+///
+/// `allocator` - The allocator to use for memory allocation.
+///
+/// `stdout` - The standard output file to write to.
+///
+/// `fps_timing_window` - The number of frames to average over when calculating
+/// the frames per second.
+///
+/// `width` - The width of the canvas in pixels.
+///
+/// `height` - The height of the canvas in pixels.
+///
+/// `null_fg_color` - The color to default to when the foreground color is `null`.
+/// If `null`, the terminal's default foreground color is used.
+///
+/// `null_bg_color` - The color to default to when the background color is `null`.
+/// If `null`, there is no background color (essentially transparent).
+pub fn init(
+    allocator: Allocator,
+    stdout: File,
+    fps_timing_window: usize,
+    width: u16,
+    height: u16,
+    null_fg_color: ?Color,
+    null_bg_color: ?Color,
+) !void {
     if (initialized) {
         return;
     }
@@ -158,6 +201,8 @@ pub fn init(allocator: Allocator, stdout: File, fps_timing_window: usize, width:
 
     _allocator = allocator;
     _stdout = stdout;
+    _null_fg_color = null_fg_color;
+    _null_bg_color = null_bg_color;
 
     if (os_tag == .windows) {
         const signal = struct {
@@ -253,6 +298,8 @@ fn handleExitWindows(sig: c_int, _: c_int) callconv(.C) void {
     handleExit(sig);
 }
 
+/// The actual size of the terminal window in characters. If the terminal size
+/// cannot be determined, `null` is returned.
 pub fn terminalSize() ?Size {
     if (os_tag == .windows) {
         return terminalSizeWindows();
@@ -305,10 +352,15 @@ fn setTerminalSizeWindows(width: u16, height: u16) void {
     _ = width;
 }
 
+/// The size of the imaginary canvas used for rendering. If larger than the
+/// terminal size, part of the canvas will be clipped. If smaller, the canvas
+/// will be centered in the terminal window.
 pub fn canvasSize() Size {
     return current_frame.size;
 }
 
+/// Sets the size of the canvas. The old canvas is cropped to fit the new size.
+/// Any new pixels are set to a default value.
 pub fn setCanvasSize(width: u16, height: u16) !void {
     if (!initialized) {
         return;
@@ -325,6 +377,7 @@ pub fn setCanvasSize(width: u16, height: u16) !void {
     current_frame.copy(old_current);
 }
 
+/// Returns a view that covers the entire canvas.
 pub fn view() View {
     return View{
         .left = 0,
@@ -362,6 +415,8 @@ pub fn setFpsTimingWindow(window: usize) !void {
     }
 }
 
+/// Sets the title of the terminal window. Fails silently if the terminal does
+/// not support setting the title.
 pub fn setTitle(title: []const u8) void {
     _stdout.writeAll(OSC ++ "0;") catch {};
     _stdout.writeAll(title) catch {};
@@ -376,6 +431,9 @@ fn useMainBuffer() void {
     _stdout.writeAll(CSI ++ "?1049l") catch {};
 }
 
+/// Overwrites the pixel at the given coordinates with the given values. Fails
+/// silently if the canvas is not initialized or the coordinates are out of
+/// bounds.
 pub fn setPixel(x: u16, y: u16, fg: ?Color, bg: ?Color, char: u21) void {
     if (!initialized or !current_frame.inBounds(x, y)) {
         return;
@@ -388,6 +446,10 @@ pub fn setPixel(x: u16, y: u16, fg: ?Color, bg: ?Color, char: u21) void {
     });
 }
 
+/// Draws a pixel to the canvas. `null` values are treated as transperant. If
+/// `fg` or `bg` is `null`, the corresponding foreground or background color is
+/// not changed. if `fg` is `null`, `char` is not drawn. Fails silently if the
+/// canvas is not initialized or the coordinates are out of bounds.
 pub fn drawPixel(x: u16, y: u16, fg: ?Color, bg: ?Color, char: u21) void {
     if (!initialized or !current_frame.inBounds(x, y)) {
         return;
@@ -401,6 +463,8 @@ pub fn drawPixel(x: u16, y: u16, fg: ?Color, bg: ?Color, char: u21) void {
     });
 }
 
+/// Renders the current frame to the terminal and advances the frame buffer,
+/// providing an empty frame for the next draw.
 pub fn render() !void {
     if (!initialized) {
         return error.NotInitialized;
@@ -429,8 +493,10 @@ pub fn render() !void {
     var last_y: u16 = 0;
     try setCursorPos(writer, last_x + x_offset, last_y + y_offset);
 
-    var last_fg = current_frame.get(last_x, last_y).fg;
-    var last_bg = current_frame.get(last_x, last_y).bg;
+    var last_fg, var last_bg = blk: {
+        const p = current_frame.get(last_x, last_y).resolve();
+        break :blk .{ p.fg, p.bg };
+    };
     try setColor(writer, last_fg, last_bg);
 
     var diff_exists = false;
@@ -438,9 +504,8 @@ pub fn render() !void {
     while (y < draw_size.height) : (y += 1) {
         var x: u16 = 0;
         while (x < draw_size.width) : (x += 1) {
-            const p = current_frame.get(x, y);
-
-            if (!should_redraw and eql(p, last_frame.get(x, y))) {
+            const p = current_frame.get(x, y).resolve();
+            if (!should_redraw and eql(p, last_frame.get(x, y).resolve())) {
                 continue;
             }
             diff_exists = true;
