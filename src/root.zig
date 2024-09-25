@@ -1,25 +1,22 @@
 //! Provides a canvas-like interface for drawing to the terminal. The methods
 //! provided are not thread-safe.
 
-// TODO: Resize terminal buffer and window to match canvas size
+pub const Animation = @import("Animation.zig");
+pub const input = @import("input.zig");
+pub const PeriodicTrigger = @import("PeriodicTrigger.zig");
+pub const View = @import("View.zig");
+
 // TODO: Thread safety? (can probably get away without it)
 // TODO: Add option to copy last frame to current frame
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const AtomicBool = std.atomic.Value(bool);
 const ByteList = std.ArrayListUnmanaged(u8);
 const File = std.fs.File;
 const kernel32 = windows.kernel32;
 const linux = std.os.linux;
 const SIG = linux.SIG;
-const time = std.time;
 const unicode = std.unicode;
 const windows = std.os.windows;
-
-pub const Animation = @import("Animation.zig");
-pub const input = @import("input.zig");
-const RingQueue = @import("ring_queue.zig").RingQueue(i64);
-pub const View = @import("View.zig");
 
 const assert = std.debug.assert;
 const eql = std.meta.eql;
@@ -44,8 +41,6 @@ var current_frame: Frame = undefined;
 var should_redraw: bool = undefined;
 var _null_fg_color: ?Color = undefined;
 var _null_bg_color: ?Color = undefined;
-
-var draw_times: RingQueue = undefined;
 
 pub const Color = u8;
 /// Closest 8-bit colors to Windows 10 Console's default 16, calculated using
@@ -187,7 +182,6 @@ pub const InitError = error{
 pub fn init(
     allocator: Allocator,
     stdout: File,
-    fps_timing_window: usize,
     width: u16,
     height: u16,
     null_fg_color: ?Color,
@@ -258,9 +252,6 @@ pub fn init(
     last_frame = try Frame.init(allocator, width, height);
     current_frame = try Frame.init(allocator, width, height);
 
-    draw_times = try RingQueue.init(allocator, fps_timing_window);
-    draw_times.enqueue(time.microTimestamp()) catch {};
-
     useAlternateBuffer();
     hideCursor(_stdout.writer()) catch {};
 
@@ -279,8 +270,6 @@ pub fn deinit() void {
     draw_buffer.deinit(_allocator);
     last_frame.deinit(_allocator);
     current_frame.deinit(_allocator);
-
-    draw_times.deinit(_allocator);
 }
 
 fn handleExit(sig: c_int) callconv(.C) void {
@@ -387,34 +376,6 @@ pub fn view() View {
     };
 }
 
-pub fn fps() f64 {
-    if (!initialized or draw_times.data.len == 0) {
-        return 0;
-    }
-    assert(!draw_times.isEmpty());
-
-    const elapsed: f64 = @floatFromInt(time.microTimestamp() - draw_times.peekIndex(0).?);
-    return time.us_per_s * @as(f64, @floatFromInt(draw_times.len())) / elapsed;
-}
-
-pub fn fpsTimingWindow() usize {
-    return draw_times.data.len;
-}
-
-pub fn setFpsTimingWindow(window: usize) !void {
-    if (!initialized) {
-        return;
-    }
-
-    var old_times = draw_times;
-    defer old_times.deinit(_allocator);
-
-    draw_times = try RingQueue.init(_allocator, window);
-    while (old_times.dequeue()) |t| {
-        draw_times.enqueue(t) catch break;
-    }
-}
-
 /// Sets the title of the terminal window. Fails silently if the terminal does
 /// not support setting the title.
 pub fn setTitle(title: []const u8) void {
@@ -471,12 +432,6 @@ pub fn render() !void {
     }
     defer should_redraw = false;
 
-    if (draw_times.data.len > 0) {
-        if (draw_times.isFull()) {
-            _ = draw_times.dequeue();
-        }
-        draw_times.enqueue(time.microTimestamp()) catch unreachable;
-    }
     updateTerminalSize();
 
     const draw_size = current_frame.size.bound(terminal_size);
