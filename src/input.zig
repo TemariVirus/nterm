@@ -311,7 +311,7 @@ else
 /// called immediately at the start of the program.
 pub fn init(allocator: Allocator) !void {
     try windows.init();
-    key_triggers = std.ArrayList(KeyTrigger).init(allocator);
+    key_triggers = .init(allocator);
     last_tick = time.nanoTimestamp();
 }
 
@@ -320,8 +320,8 @@ pub fn deinit() void {
 }
 
 fn updateKeyStates() void {
-    key_states = KeyStateArray.initEmpty();
-    var checked = KeyStateArray.initEmpty();
+    key_states = .initEmpty();
+    var checked: KeyStateArray = .initEmpty();
     for (key_triggers.items) |trigger| {
         const idx = @intFromEnum(trigger.key);
         // Key down checks are somewhat expensive, don't repeat them
@@ -359,7 +359,7 @@ pub fn addKeyTrigger(
     repeat_delay: ?u64,
     action: *const fn () void,
 ) !usize {
-    const trigger = KeyTrigger.init(key, delay, repeat_delay orelse 0, action);
+    const trigger: KeyTrigger = .init(key, delay, repeat_delay orelse 0, action);
     try key_triggers.append(trigger);
     return trigger.id;
 }
