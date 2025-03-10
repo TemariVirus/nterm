@@ -42,6 +42,7 @@ var should_redraw: bool = undefined;
 var _null_fg_color: ?Color = undefined;
 var _null_bg_color: ?Color = undefined;
 
+// TODO: Make this an enum
 pub const Color = u8;
 /// Closest 8-bit colors to Windows 10 Console's default 16, calculated using
 /// CIELAB color space (https://en.wikipedia.org/wiki/ANSI_escape_code#Colors)
@@ -110,9 +111,9 @@ pub const Frame = struct {
     pixels: []Pixel,
 
     pub fn init(allocator: Allocator, width: u16, height: u16) !Frame {
-        const size = Size{ .width = width, .height = height };
+        const size: Size = .{ .width = width, .height = height };
         const pixels = try allocator.alloc(Pixel, size.area());
-        var frame = Frame{ .size = size, .pixels = pixels };
+        var frame: Frame = .{ .size = size, .pixels = pixels };
         frame.fill(.{ .fg = null, .bg = null, .char = ' ' });
         return frame;
     }
@@ -148,9 +149,7 @@ pub const Frame = struct {
     }
 
     pub fn fill(self: *Frame, p: Pixel) void {
-        for (self.pixels) |*pixel| {
-            pixel.* = p;
-        }
+        @memset(self.pixels, p);
     }
 };
 
@@ -246,11 +245,11 @@ pub fn init(
     }
 
     // Use a guess if we can't get the terminal size
-    terminal_size = terminalSize() orelse Size{ .width = 120, .height = 30 };
-    draw_buffer = ByteList{};
+    terminal_size = terminalSize() orelse .{ .width = 120, .height = 30 };
+    draw_buffer = .{};
 
-    last_frame = try Frame.init(allocator, width, height);
-    current_frame = try Frame.init(allocator, width, height);
+    last_frame = try .init(allocator, width, height);
+    current_frame = try .init(allocator, width, height);
 
     useAlternateBuffer();
     hideCursor(_stdout.writer()) catch {};
@@ -294,7 +293,7 @@ pub fn terminalSize() ?Size {
         return terminalSizeWindows();
     }
 
-    var size: linux.winsize = undefined;
+    var size: std.posix.winsize = undefined;
     const result = linux.ioctl(
         std.os.linux.STDOUT_FILENO,
         linux.T.IOCGWINSZ,
@@ -304,9 +303,9 @@ pub fn terminalSize() ?Size {
         return null;
     }
 
-    return Size{
-        .width = size.ws_col,
-        .height = size.ws_row,
+    return .{
+        .width = size.col,
+        .height = size.row,
     };
 }
 
@@ -317,7 +316,7 @@ fn terminalSizeWindows() ?Size {
         return null;
     }
 
-    return Size{
+    return .{
         .width = @bitCast(info.dwSize.X),
         .height = @bitCast(info.dwSize.Y),
     };
@@ -361,14 +360,14 @@ pub fn setCanvasSize(width: u16, height: u16) !void {
     var old_current = current_frame;
     defer old_current.deinit(_allocator);
 
-    last_frame = try Frame.init(_allocator, width, height);
-    current_frame = try Frame.init(_allocator, width, height);
+    last_frame = try .init(_allocator, width, height);
+    current_frame = try .init(_allocator, width, height);
     current_frame.copy(old_current);
 }
 
 /// Returns a view that covers the entire canvas.
 pub fn view() View {
-    return View{
+    return .{
         .left = 0,
         .top = 0,
         .width = current_frame.size.width,
@@ -493,7 +492,7 @@ pub fn render() !void {
     // Reset colors at the end so that the area outside the canvas is unaffected
     try resetColors(writer);
     if (diff_exists) {
-        _stdout.writeAll(draw_buffer.items[0..draw_buffer.items.len]) catch {};
+        _stdout.writeAll(draw_buffer.items) catch {};
     }
     try advanceBuffers();
 }

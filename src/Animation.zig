@@ -46,19 +46,14 @@ pub fn forceRender(self: Self) bool {
         return true;
     }
 
-    // Binary search
-    var left: usize = 0;
-    var right: usize = self.frame_times.len;
-    while (left < right) {
-        const mid = (left + right) / 2;
-        if (self.frame_times[mid] <= self.time) {
-            left = mid + 1;
-        } else {
-            right = mid;
+    const predicate = struct {
+        fn predicate(self_time: u64, frame_time: u64) bool {
+            return frame_time <= self_time;
         }
-    }
+    }.predicate;
+    const current_index = std.sort.partitionPoint(u64, self.frame_times, self.time, predicate);
 
-    const frame = self.frames[left];
+    const frame = self.frames[current_index];
     for (0..self.size.height) |y| {
         for (0..self.size.width) |x| {
             const pixel = frame[@as(usize, y) * self.size.width + @as(usize, x)];
