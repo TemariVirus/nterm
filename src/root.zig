@@ -299,7 +299,7 @@ pub fn terminalSize() ?Size {
         linux.T.IOCGWINSZ,
         @intFromPtr(&size),
     );
-    if (result == 0) {
+    if (result != 0) {
         return null;
     }
 
