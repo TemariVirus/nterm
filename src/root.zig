@@ -347,6 +347,12 @@ pub fn canvasSize() Size {
     return current_frame.size;
 }
 
+/// Returns the pixel array of the canvas. It is safe to read and write to the
+/// array directly (as long as `render()` is not running).
+pub fn canvas() []Pixel {
+    return current_frame.pixels;
+}
+
 /// Sets the size of the canvas. The old canvas is cropped to fit the new size.
 /// Any new pixels are set to a default value.
 pub fn setCanvasSize(width: u16, height: u16) !void {
