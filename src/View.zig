@@ -1,21 +1,27 @@
 const std = @import("std");
 const assert = std.debug.assert;
 const unicode = std.unicode;
+const Writer = std.Io.Writer;
 
 const root = @import("root.zig");
 const Color = root.Color;
 
 const Self = @This();
 
-const WriterContext = struct {
-    self: Self,
+const ViewWriter = struct {
+    view: Self,
     start: usize = 0,
     x: u16,
     y: u16,
     fg: ?Color,
     bg: ?Color,
+    writer: Writer = .{
+        .buffer = &.{},
+        .vtable = &.{
+            .drain = viewDrain,
+        },
+    },
 };
-const Writer = std.io.Writer(*WriterContext, error{}, writeFn);
 
 pub const Alignment = enum {
     left,
@@ -66,7 +72,7 @@ pub fn writeText(
     bg: ?Color,
     text: []const u8,
 ) u16 {
-    var code_points = (unicode.Utf8View.init(text) catch unreachable).iterator();
+    var code_points = unicode.Utf8View.initUnchecked(text).iterator();
     var i = x;
     while (code_points.nextCodepoint()) |c| {
         if (!self.writePixel(i, y, fg, bg, c)) {
@@ -112,15 +118,14 @@ pub fn printAt(
     comptime format: []const u8,
     args: anytype,
 ) void {
-    var context = WriterContext{
-        .self = self,
+    var vw: ViewWriter = .{
+        .view = self,
         .x = x,
         .y = y,
         .fg = fg,
         .bg = bg,
     };
-    const writer = Writer{ .context = &context };
-    writer.print(format, args) catch unreachable;
+    vw.writer.print(format, args) catch unreachable;
 }
 
 /// Overflows are truncated.
@@ -143,16 +148,15 @@ pub fn printAligned(
     const len = getFmtLen(format, args);
     const x, const start = allignText(alignment, self.width, len);
 
-    var context = WriterContext{
-        .self = self,
+    var vw = ViewWriter{
+        .view = self,
         .start = start,
         .x = x,
         .y = y,
         .fg = fg,
         .bg = bg,
     };
-    const writer = Writer{ .context = &context };
-    writer.print(format, args) catch unreachable;
+    vw.writer.print(format, args) catch unreachable;
 }
 
 fn allignText(alignment: Alignment, view_width: u16, text_len: usize) struct { u16, usize } {
@@ -170,37 +174,51 @@ fn allignText(alignment: Alignment, view_width: u16, text_len: usize) struct { u
     return .{ x, start };
 }
 
-fn writeFn(context: *WriterContext, bytes: []const u8) !usize {
-    var codepoints = (unicode.Utf8View.init(bytes) catch unreachable).iterator();
+fn viewDrain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+    assert(data.len == 1);
+    assert(splat == 1);
+
+    const vw: *ViewWriter = @fieldParentPtr("writer", w);
+
+    var codepoints = unicode.Utf8View.initUnchecked(data[0]).iterator();
     var bytes_start: usize = 0;
-    while (context.start > 0) : (context.start -= 1) {
+    while (vw.start > 0) : (vw.start -= 1) {
         if (codepoints.nextCodepoint()) |c| {
             bytes_start += unicode.utf8CodepointSequenceLength(c) catch unreachable;
         } else {
-            return bytes.len;
+            return data[0].len;
         }
     }
 
-    if (context.x < context.self.width) {
-        _ = context.self.writeText(context.x, context.y, context.fg, context.bg, bytes[bytes_start..]);
-        context.x +|= @intCast(@min(std.math.maxInt(u16), bytes.len));
+    if (vw.x < vw.view.width) {
+        _ = vw.view.writeText(vw.x, vw.y, vw.fg, vw.bg, data[0][bytes_start..]);
+        vw.x +|= @intCast(@min(std.math.maxInt(u16), data[0].len));
     }
 
     // Bytes that were truncated are also considered written
-    return bytes.len;
+    return data[0].len;
 }
 
 // Gets the length of a formatted string.
 fn getFmtLen(comptime format: []const u8, args: anytype) usize {
     var len: usize = 0;
-    const writer = std.io.Writer(*usize, error{}, getFmtLenWriterFn){ .context = &len };
-    std.fmt.format(writer, format, args) catch unreachable;
+    var writer: Writer = .{
+        .buffer = std.mem.asBytes(&len),
+        .vtable = &.{
+            .drain = getFmtLenDrain,
+        },
+    };
+    writer.print(format, args) catch unreachable;
     return len;
 }
 
-fn getFmtLenWriterFn(context: *usize, bytes: []const u8) !usize {
-    context.* += unicode.utf8CountCodepoints(bytes) catch unreachable;
-    return bytes.len;
+fn getFmtLenDrain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+    assert(data.len == 1);
+    assert(splat == 1);
+
+    const len = std.mem.bytesAsValue(usize, w.buffer);
+    len.* += unicode.utf8CountCodepoints(data[0]) catch unreachable;
+    return data[0].len;
 }
 
 /// Draws a box positioned relative to the view.

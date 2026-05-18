@@ -2,55 +2,60 @@
 //! event loops.
 
 const std = @import("std");
+const Io = std.Io;
 const assert = std.debug.assert;
-const nanoTimestamp = std.time.nanoTimestamp;
 
-/// The fixed period, in nanoseconds.
-period: u64,
+/// The Io instance to get timestamps from.
+io: Io,
+/// The fixed period.
+period: Io.Duration,
 /// Whether to skip missed periods. If true, the trigger will skip to the most
 /// recent complete period when `trigger` is called.
 skip_missed: bool,
-/// The timestamp of the last trigger firing, in nanoseconds.
-last: i128,
+/// The timestamp of the last trigger firing.
+last: Io.Timestamp,
 
 /// Initializes a new `PeriodicTrigger`.
 ///
-/// `period` - is the fixed period, in nanoseconds.
+/// `io` - The Io instance to get timestamps from.
+///
+/// `period` - is the fixed period.
 ///
 /// `skip_missed` - If true, the trigger will skip to the most recent complete
 /// period when `trigger` is called.
-pub fn init(period: u64, skip_missed: bool) @This() {
-    assert(period > 0);
+pub fn init(io: Io, period: Io.Duration, skip_missed: bool) @This() {
+    assert(period.nanoseconds > 0);
     return .{
+        .io = io,
         .period = period,
         .skip_missed = skip_missed,
-        .last = nanoTimestamp(),
+        .last = .now(io, .real),
     };
 }
 
 /// Checks if the trigger should fire. If it should not fire yet, returns
-/// `null`. If it should fire, returns the nanoseconds between the last and
+/// `null`. If it should fire, returns the duration between the last and
 /// current trigger firings (i.e., `period`). If `skip_missed` is true, the
-/// trigger will return a multiple of `period` instead.
-pub fn trigger(self: *@This()) ?u64 {
-    const now = nanoTimestamp();
+/// trigger will return a multiple of `period`.
+pub fn trigger(self: *@This()) ?Io.Duration {
+    const now: Io.Timestamp = .now(self.io, .real);
     // No time has passed yet
-    if (now <= self.last) {
+    if (now.nanoseconds <= self.last.nanoseconds) {
         return null;
     }
 
-    const elapsed: u128 = @intCast(now - self.last);
-    if (elapsed < self.period) {
+    const elapsed = self.last.durationTo(now);
+    if (elapsed.nanoseconds < self.period.nanoseconds) {
         return null;
     }
 
     if (self.skip_missed) {
-        const partial_period_time = elapsed % self.period;
-        const time_to_add: u64 = @intCast(elapsed - partial_period_time);
-        self.last += time_to_add;
-        return time_to_add;
+        const partial_period_time = @rem(elapsed.nanoseconds, self.period.nanoseconds);
+        const time_to_add = elapsed.nanoseconds - partial_period_time;
+        self.last = self.last.addDuration(.fromNanoseconds(time_to_add));
+        return .fromNanoseconds(time_to_add);
     } else {
-        self.last += self.period;
+        self.last = self.last.addDuration(self.period);
         return self.period;
     }
 }

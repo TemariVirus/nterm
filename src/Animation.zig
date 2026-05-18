@@ -7,15 +7,22 @@ const Size = root.Size;
 const View = root.View;
 
 time: u64 = 0,
-frames: []const []const Pixel,
+frame_count: usize,
+frames: [*]const []const Pixel,
 /// The time at which each frame ends, in nanoseconds.
-frame_times: []const u64,
+frame_times: [*]const u64,
 size: Size,
 view: View,
 
 const Self = @This();
 
-pub fn init(frames: []const []const Pixel, frame_times: []const u64, size: Size, view: View) Self {
+pub fn init(
+    time: u64,
+    frames: []const []const Pixel,
+    frame_times: []const u64,
+    size: Size,
+    view: View,
+) Self {
     assert(frames.len > 0);
     assert(frames.len == frame_times.len);
     for (frames) |frame| {
@@ -23,15 +30,17 @@ pub fn init(frames: []const []const Pixel, frame_times: []const u64, size: Size,
     }
 
     return .{
-        .frames = frames,
-        .frame_times = frame_times,
+        .time = time,
+        .frame_count = frames.len,
+        .frames = frames.ptr,
+        .frame_times = frame_times.ptr,
         .size = size,
         .view = view,
     };
 }
 
 pub fn done(self: Self) bool {
-    return self.time >= self.frame_times[self.frame_times.len - 1];
+    return self.time >= self.frame_times[self.frame_count - 1];
 }
 
 /// Returns true if the animation is done.
@@ -51,7 +60,12 @@ pub fn forceRender(self: Self) bool {
             return frame_time <= self_time;
         }
     }.predicate;
-    const current_index = std.sort.partitionPoint(u64, self.frame_times, self.time, predicate);
+    const current_index = std.sort.partitionPoint(
+        u64,
+        self.frame_times[0..self.frame_count],
+        self.time,
+        predicate,
+    );
 
     const frame = self.frames[current_index];
     for (0..self.size.height) |y| {

@@ -10,8 +10,9 @@ pub const View = @import("View.zig");
 // TODO: Add option to copy last frame to current frame
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ByteList = std.ArrayListUnmanaged(u8);
-const File = std.fs.File;
+const ByteList = std.ArrayList(u8);
+const File = std.Io.File;
+const Writer = std.Io.Writer;
 const kernel32 = windows.kernel32;
 const linux = std.os.linux;
 const SIG = linux.SIG;
@@ -31,10 +32,11 @@ const ST = ESC ++ "\\";
 // to prevent double frees. The rest of this struct however is not thread-safe.
 var initialized: bool = false;
 
+var _io: std.Io = undefined;
 pub var _allocator: Allocator = undefined;
 var _stdout: File = undefined;
 var terminal_size: Size = undefined;
-var draw_buffer: ByteList = undefined;
+var draw_buffer: Writer.Allocating = undefined;
 
 var last_frame: Frame = undefined;
 var current_frame: Frame = undefined;
@@ -162,6 +164,8 @@ pub const InitError = error{
 /// other functions in this module. Fails silently if the canvas is already
 /// initialized.
 ///
+/// `io` - The Io instance to use.
+///
 /// `allocator` - The allocator to use for memory allocation.
 ///
 /// `stdout` - The standard output file to write to.
@@ -179,6 +183,7 @@ pub const InitError = error{
 /// `null_bg_color` - The color to default to when the background color is `null`.
 /// If `null`, there is no background color (essentially transparent).
 pub fn init(
+    io: std.Io,
     allocator: Allocator,
     stdout: File,
     width: u16,
@@ -192,6 +197,7 @@ pub fn init(
     initialized = true;
     errdefer initialized = false;
 
+    _io = io;
     _allocator = allocator;
     _stdout = stdout;
     _null_fg_color = null_fg_color;
@@ -201,23 +207,29 @@ pub fn init(
         const signal = struct {
             extern "c" fn signal(
                 sig: c_int,
-                func: *const fn (c_int, c_int) callconv(windows.WINAPI) void,
-            ) callconv(.C) *anyopaque;
+                func: *const fn (c_int, c_int) callconv(.winapi) void,
+            ) callconv(.c) *anyopaque;
         }.signal;
-        _ = signal(SIG.INT, handleExitWindows);
+        _ = signal(@intFromEnum(SIG.INT), handleExitWindows);
     } else {
         const action = linux.Sigaction{
             .handler = .{ .handler = handleExit },
-            .mask = linux.empty_sigset,
+            .mask = linux.sigemptyset(),
             .flags = 0,
         };
         _ = linux.sigaction(SIG.INT, &action, null);
     }
 
     if (os_tag == .windows) {
+        const setConsoleOutputCP = struct {
+            extern "kernel32" fn SetConsoleOutputCP(
+                wCodePageID: windows.UINT,
+            ) callconv(.winapi) windows.BOOL;
+        }.SetConsoleOutputCP;
+
         const CP_UTF8 = 65001;
-        const result = kernel32.SetConsoleOutputCP(CP_UTF8);
-        if (result == windows.FALSE) {
+        const result = setConsoleOutputCP(CP_UTF8);
+        if (result == .FALSE) {
             return InitError.FailedToSetConsoleOutputCP;
         }
 
@@ -225,7 +237,7 @@ pub fn init(
             extern "kernel32" fn SetConsoleMode(
                 console: windows.HANDLE,
                 mode: windows.DWORD,
-            ) callconv(windows.WINAPI) windows.BOOL;
+            ) callconv(.winapi) windows.BOOL;
         }.SetConsoleMode;
 
         const ENABLE_PROCESSED_OUTPUT = 0x1;
@@ -239,20 +251,21 @@ pub fn init(
                 ENABLE_VIRTUAL_TERMINAL_PROCESSING |
                 ENABLE_LVB_GRID_WORLDWIDE,
         );
-        if (result2 == windows.FALSE) {
+        if (result2 == .FALSE) {
             return InitError.FailedToSetConsoleMode;
         }
     }
 
     // Use a guess if we can't get the terminal size
     terminal_size = terminalSize() orelse .{ .width = 120, .height = 30 };
-    draw_buffer = .{};
+    draw_buffer = .init(allocator);
 
     last_frame = try .init(allocator, width, height);
     current_frame = try .init(allocator, width, height);
 
+    var stdout_writer = _stdout.writer(_io, &.{});
     useAlternateBuffer();
-    hideCursor(_stdout.writer()) catch {};
+    hideCursor(&stdout_writer.interface) catch {};
 
     should_redraw = true;
 }
@@ -263,15 +276,16 @@ pub fn deinit() void {
     }
     initialized = false;
 
+    var stdout_writer = _stdout.writer(_io, &.{});
     useMainBuffer();
-    showCursor(_stdout.writer()) catch {};
+    showCursor(&stdout_writer.interface) catch {};
 
-    draw_buffer.deinit(_allocator);
+    draw_buffer.deinit();
     last_frame.deinit(_allocator);
     current_frame.deinit(_allocator);
 }
 
-fn handleExit(sig: c_int) callconv(.C) void {
+fn handleExit(sig: SIG) callconv(.c) void {
     switch (sig) {
         // Handle interrupt
         SIG.INT => {
@@ -282,8 +296,8 @@ fn handleExit(sig: c_int) callconv(.C) void {
     }
 }
 
-fn handleExitWindows(sig: c_int, _: c_int) callconv(.C) void {
-    handleExit(sig);
+fn handleExitWindows(sig: c_int, _: c_int) callconv(.c) void {
+    handleExit(@enumFromInt(sig));
 }
 
 /// The actual size of the terminal window in characters. If the terminal size
@@ -310,15 +324,18 @@ pub fn terminalSize() ?Size {
 }
 
 fn terminalSizeWindows() ?Size {
-    var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
-    const result = kernel32.GetConsoleScreenBufferInfo(_stdout.handle, &info);
-    if (result == windows.FALSE) {
+    const old_cancel_protect = _io.swapCancelProtection(.blocked);
+    defer _ = _io.swapCancelProtection(old_cancel_protect);
+
+    var info = windows.CONSOLE.USER_IO.GET_SCREEN_BUFFER_INFO;
+    const result = info.operate(_io, _stdout) catch unreachable;
+    if (result != .SUCCESS) {
         return null;
     }
 
     return .{
-        .width = @bitCast(info.dwSize.X),
-        .height = @bitCast(info.dwSize.Y),
+        .width = @bitCast(info.Data.dwSize.X),
+        .height = @bitCast(info.Data.dwSize.Y),
     };
 }
 
@@ -384,17 +401,17 @@ pub fn view() View {
 /// Sets the title of the terminal window. Fails silently if the terminal does
 /// not support setting the title.
 pub fn setTitle(title: []const u8) void {
-    _stdout.writeAll(OSC ++ "0;") catch {};
-    _stdout.writeAll(title) catch {};
-    _stdout.writeAll(ST) catch {};
+    _stdout.writeStreamingAll(_io, OSC ++ "0;") catch {};
+    _stdout.writeStreamingAll(_io, title) catch {};
+    _stdout.writeStreamingAll(_io, ST) catch {};
 }
 
 fn useAlternateBuffer() void {
-    _stdout.writeAll(CSI ++ "?1049h") catch {};
+    _stdout.writeStreamingAll(_io, CSI ++ "?1049h") catch {};
 }
 
 fn useMainBuffer() void {
-    _stdout.writeAll(CSI ++ "?1049l") catch {};
+    _stdout.writeStreamingAll(_io, CSI ++ "?1049l") catch {};
 }
 
 /// Overwrites the pixel at the given coordinates with the given values. Fails
@@ -440,7 +457,7 @@ pub fn render() !void {
     updateTerminalSize();
 
     const draw_size = current_frame.size.bound(terminal_size);
-    const writer = draw_buffer.writer(_allocator);
+    const writer = &draw_buffer.writer;
     const x_offset = @max(0, terminal_size.width - draw_size.width) / 2;
     const y_offset = @max(0, terminal_size.height - draw_size.height) / 2;
 
@@ -498,7 +515,7 @@ pub fn render() !void {
     // Reset colors at the end so that the area outside the canvas is unaffected
     try resetColors(writer);
     if (diff_exists) {
-        _stdout.writeAll(draw_buffer.items) catch {};
+        _stdout.writeStreamingAll(_io, draw_buffer.written()) catch {};
     }
     try advanceBuffers();
 }
@@ -517,22 +534,24 @@ fn advanceBuffers() !void {
 
     // Limit the size of the draw buffer to not waste memory
     const max_size = current_frame.size.area() * 12;
-    if (draw_buffer.items.len > max_size) {
-        draw_buffer.clearAndFree(_allocator);
-        try draw_buffer.ensureTotalCapacity(_allocator, max_size / 2);
+    if (draw_buffer.written().len > max_size) {
+        const allocator = draw_buffer.allocator;
+        draw_buffer.deinit();
+        draw_buffer = .init(allocator);
+        try draw_buffer.ensureTotalCapacity(max_size / 2);
     }
     draw_buffer.clearRetainingCapacity();
 }
 
-fn clearScreen(writer: anytype) !void {
+fn clearScreen(writer: *Writer) !void {
     try writer.writeAll(CSI ++ "2J");
 }
 
-fn resetColors(writer: anytype) !void {
+fn resetColors(writer: *Writer) !void {
     try writer.writeAll(CSI ++ "m");
 }
 
-fn setColor(writer: anytype, fg: ?Color, bg: ?Color) !void {
+fn setColor(writer: *Writer, fg: ?Color, bg: ?Color) !void {
     if (fg == null or bg == null) {
         try resetColors(writer);
         if (fg) |fg_color| {
@@ -547,27 +566,27 @@ fn setColor(writer: anytype, fg: ?Color, bg: ?Color) !void {
     try writer.print(CSI ++ "38;5;{};48;5;{}m", .{ fg.?, bg.? });
 }
 
-fn setForeColor(writer: anytype, fg: Color) !void {
+fn setForeColor(writer: *Writer, fg: Color) !void {
     try writer.print(CSI ++ "38;5;{}m", .{fg});
 }
 
-fn setBackColor(writer: anytype, bg: Color) !void {
+fn setBackColor(writer: *Writer, bg: Color) !void {
     try writer.print(CSI ++ "48;5;{}m", .{bg});
 }
 
-fn resetCursor(writer: anytype) !void {
+fn resetCursor(writer: *Writer) !void {
     try writer.writeAll(CSI ++ "H");
 }
 
-fn setCursorPos(writer: anytype, x: u16, y: u16) !void {
+fn setCursorPos(writer: *Writer, x: u16, y: u16) !void {
     // Convert 0-based coordinates to 1-based
     try writer.print(CSI ++ "{};{}H", .{ y + 1, x + 1 });
 }
 
-fn showCursor(writer: anytype) !void {
+fn showCursor(writer: *Writer) !void {
     try writer.writeAll(CSI ++ "?25h");
 }
 
-fn hideCursor(writer: anytype) !void {
+fn hideCursor(writer: *Writer) !void {
     try writer.writeAll(CSI ++ "?25l");
 }

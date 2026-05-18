@@ -269,9 +269,9 @@ const windows = if (builtin.os.tag == .windows)
             OemClear = 0xFE,
         };
 
-        extern "user32" fn GetAsyncKeyState(vKey: c_uint) callconv(win.WINAPI) win.USHORT;
+        extern "user32" fn GetAsyncKeyState(vKey: c_uint) callconv(.winapi) win.USHORT;
 
-        extern "user32" fn GetForegroundWindow() callconv(win.WINAPI) win.HWND;
+        extern "user32" fn GetForegroundWindow() callconv(.winapi) win.HWND;
 
         fn init() !void {
             // Return if already initialized
