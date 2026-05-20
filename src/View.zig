@@ -1,6 +1,6 @@
 const std = @import("std");
 const assert = std.debug.assert;
-const unicode = std.unicode;
+const unicode = @import("unicode.zig");
 const Writer = std.Io.Writer;
 
 const root = @import("root.zig");
@@ -72,9 +72,9 @@ pub fn writeText(
     bg: ?Color,
     text: []const u8,
 ) u16 {
-    var code_points = unicode.Utf8View.initUnchecked(text).iterator();
+    var code_points: unicode.Utf8Iterator = .init(text);
     var i = x;
-    while (code_points.nextCodepoint()) |c| {
+    while (code_points.next()) |c| {
         if (!self.writePixel(i, y, fg, bg, c)) {
             break;
         }
@@ -92,14 +92,14 @@ pub fn writeAligned(
     bg: ?Color,
     text: []const u8,
 ) void {
-    const len = unicode.utf8CountCodepoints(text) catch unreachable;
+    const len = unicode.utf8CountCodepoints(text);
     var x, const start = allignText(alignment, self.width, len);
 
-    var codepoints = (unicode.Utf8View.init(text) catch unreachable).iterator();
+    var codepoints: unicode.Utf8Iterator = .init(text);
     for (0..start) |_| {
-        _ = codepoints.nextCodepoint();
+        _ = codepoints.next();
     }
-    while (codepoints.nextCodepoint()) |c| {
+    while (codepoints.next()) |c| {
         if (x >= self.width) {
             break;
         }
@@ -180,18 +180,15 @@ fn viewDrain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!us
 
     const vw: *ViewWriter = @fieldParentPtr("writer", w);
 
-    var codepoints = unicode.Utf8View.initUnchecked(data[0]).iterator();
-    var bytes_start: usize = 0;
+    var codepoints: unicode.Utf8Iterator = .init(data[0]);
     while (vw.start > 0) : (vw.start -= 1) {
-        if (codepoints.nextCodepoint()) |c| {
-            bytes_start += unicode.utf8CodepointSequenceLength(c) catch unreachable;
-        } else {
+        if (codepoints.next() == null) {
             return data[0].len;
         }
     }
 
     if (vw.x < vw.view.width) {
-        _ = vw.view.writeText(vw.x, vw.y, vw.fg, vw.bg, data[0][bytes_start..]);
+        _ = vw.view.writeText(vw.x, vw.y, vw.fg, vw.bg, codepoints.bytes);
         vw.x +|= @intCast(@min(std.math.maxInt(u16), data[0].len));
     }
 
@@ -217,7 +214,7 @@ fn getFmtLenDrain(w: *Writer, data: []const []const u8, splat: usize) Writer.Err
     assert(splat == 1);
 
     const len = std.mem.bytesAsValue(usize, w.buffer);
-    len.* += unicode.utf8CountCodepoints(data[0]) catch unreachable;
+    len.* += unicode.utf8CountCodepoints(data[0]);
     return data[0].len;
 }
 
