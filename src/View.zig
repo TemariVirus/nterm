@@ -18,9 +18,50 @@ const ViewWriter = struct {
     writer: Writer = .{
         .buffer = &.{},
         .vtable = &.{
-            .drain = viewDrain,
+            .drain = drain,
         },
     },
+
+    fn drain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+        assert(data.len == 1);
+        assert(splat == 1);
+
+        const vw: *ViewWriter = @fieldParentPtr("writer", w);
+
+        var codepoints: unicode.Utf8Iterator = .init(data[0]);
+        while (vw.start > 0) : (vw.start -= 1) {
+            if (codepoints.next() == null) {
+                return data[0].len;
+            }
+        }
+
+        if (vw.x < vw.view.width) {
+            _ = vw.view.writeText(vw.x, vw.y, vw.fg, vw.bg, codepoints.bytes);
+            vw.x +|= @intCast(@min(std.math.maxInt(u16), data[0].len));
+        }
+
+        // Bytes that were truncated are also considered written
+        return data[0].len;
+    }
+};
+
+const Utf8DiscardWriter = struct {
+    count: usize = 0,
+    inner: Writer = .{
+        .buffer = &.{},
+        .vtable = &.{
+            .drain = drain,
+        },
+    },
+
+    fn drain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
+        assert(data.len == 1);
+        assert(splat == 1);
+
+        const parent: *Utf8DiscardWriter = @fieldParentPtr("inner", w);
+        parent.count += unicode.utf8CountCodepoints(data[0]);
+        return data[0].len;
+    }
 };
 
 pub const Alignment = enum {
@@ -174,48 +215,11 @@ fn allignText(alignment: Alignment, view_width: u16, text_len: usize) struct { u
     return .{ x, start };
 }
 
-fn viewDrain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
-    assert(data.len == 1);
-    assert(splat == 1);
-
-    const vw: *ViewWriter = @fieldParentPtr("writer", w);
-
-    var codepoints: unicode.Utf8Iterator = .init(data[0]);
-    while (vw.start > 0) : (vw.start -= 1) {
-        if (codepoints.next() == null) {
-            return data[0].len;
-        }
-    }
-
-    if (vw.x < vw.view.width) {
-        _ = vw.view.writeText(vw.x, vw.y, vw.fg, vw.bg, codepoints.bytes);
-        vw.x +|= @intCast(@min(std.math.maxInt(u16), data[0].len));
-    }
-
-    // Bytes that were truncated are also considered written
-    return data[0].len;
-}
-
 // Gets the length of a formatted string.
 fn getFmtLen(comptime format: []const u8, args: anytype) usize {
-    var len: usize = 0;
-    var writer: Writer = .{
-        .buffer = std.mem.asBytes(&len),
-        .vtable = &.{
-            .drain = getFmtLenDrain,
-        },
-    };
-    writer.print(format, args) catch unreachable;
-    return len;
-}
-
-fn getFmtLenDrain(w: *Writer, data: []const []const u8, splat: usize) Writer.Error!usize {
-    assert(data.len == 1);
-    assert(splat == 1);
-
-    const len = std.mem.bytesAsValue(usize, w.buffer);
-    len.* += unicode.utf8CountCodepoints(data[0]);
-    return data[0].len;
+    var writer: Utf8DiscardWriter = .{};
+    writer.inner.print(format, args) catch unreachable;
+    return writer.count;
 }
 
 /// Draws a box positioned relative to the view.
